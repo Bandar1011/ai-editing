@@ -1143,13 +1143,11 @@ async function poll() {
   try {
     const id = project.id,
       p = await api(`/api/projects/${project.id}`);
-    if (
-      project?.id !== id ||
-      dirty ||
-      savePromise ||
-      p.revision <= project.revision
-    )
+    if (project?.id !== id || dirty || savePromise) return;
+    if (p.revision <= project.revision) {
+      setSaveStatus("All changes saved");
       return;
+    }
     const was = project.jobs;
     const changedEdit =
       JSON.stringify(editable(p)) !== JSON.stringify(savedEditable);
