@@ -1,0 +1,8 @@
+{
+  "name": "ai-editing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check web/app.js"
+  }
+}

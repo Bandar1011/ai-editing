@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>AI Editing</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%23d9f99d'/%3E%3Cpath d='M12 11v18h6V11zm10 0v18h6V11z' fill='%23151918'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+    <script type="module" src="/static/app.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="AI Editing home"
+          ><span class="brand-mark"><i></i><i></i></span>ai<span
+            >editing</span
+          ></a
+        >
+        <div class="header-divider"></div>
+        <span class="header-label">YOUR EDITING ROOM</span>
+        <div class="header-end">
+          <span id="save-status" class="save-status"
+            ><span class="status-dot"></span>On your Mac</span
+          ><button id="import-button" class="button subtle">＋ Add video</button
+          ><button id="export-button" class="button primary" disabled>
+            <span>↗</span> Export video
+          </button>
+        </div>
+      </header>
+      <aside class="library">
+        <div class="sidebar-label">
+          WORKSPACE <span id="project-count">0</span>
+        </div>
+        <div id="project-list" class="project-list"></div>
+        <button id="sidebar-import" class="sidebar-add">＋ Add a video</button>
+        <div class="sidebar-bottom">
+          <span class="local-badge"
+            ><span class="status-dot"></span> LOCAL WORKSPACE</span
+          >
+          <p>Your videos stay<br />on your computer.</p>
+          <button id="help-button" class="text-button">
+            How chat and the editor work ↗
+          </button>
+        </div>
+      </aside>
+      <main>
+        <section id="empty-state" class="empty-state">
+          <div class="eyebrow">ONE CLIP. A CLEARER STORY.</div>
+          <h1>Start with the story.<br /><span>Keep the good parts.</span></h1>
+          <p>
+            Transcribe. Shape the cut. Review the exact export.<br />Keep every
+            correction with the version it belongs to.
+          </p>
+          <div
+            id="dropzone"
+            class="dropzone"
+            tabindex="0"
+            role="button"
+            aria-label="Upload a video"
+          >
+            <span class="upload-icon">↥</span
+            ><strong>Drop a video to start</strong
+            ><span>or <u>browse files</u> on your Mac</span
+            ><small>MP4, MOV, WebM and more</small>
+          </div>
+          <div class="empty-features">
+            <span>◌ Source-time cuts</span><span>▤ Local transcription</span
+            ><span>↗ Versioned review</span>
+          </div>
+        </section>
+        <section id="editor" class="editor" hidden>
+          <div class="project-heading">
+            <div>
+              <div class="eyebrow">CURRENT PROJECT</div>
+              <input
+                id="project-name"
+                aria-label="Project name"
+                maxlength="200"
+              />
+            </div>
+            <div class="project-details" id="project-details"></div>
+          </div>
+          <div class="editing-grid">
+            <div class="preview-column">
+              <div class="preview-card">
+                <div class="preview-top">
+                  <span><span class="tiny-dot"></span> PREVIEW</span>
+                  <div
+                    class="mode-switch"
+                    role="group"
+                    aria-label="Preview mode"
+                  >
+                    <button id="edited-mode" class="active">Edited</button
+                    ><button id="original-mode">Original</button>
+                  </div>
+                </div>
+                <div id="video-stage" class="video-stage">
+                  <video id="video" playsinline preload="metadata"></video>
+                  <div id="video-placeholder" class="video-placeholder">
+                    <span class="spinner"></span>Preparing your preview…
+                  </div>
+                  <div
+                    id="caption-overlay"
+                    class="caption-overlay"
+                    dir="auto"
+                  ></div>
+                  <span id="cut-badge" class="cut-badge" hidden
+                    >REMOVED SECTION</span
+                  >
+                </div>
+                <div class="transport">
+                  <div class="play-controls">
+                    <button
+                      id="back-button"
+                      aria-label="Back two seconds"
+                      title="Back 2 seconds"
+                    >
+                      ↶</button
+                    ><button
+                      id="play-button"
+                      class="play-button"
+                      aria-label="Play video"
+                    >
+                      ▶</button
+                    ><button
+                      id="forward-button"
+                      aria-label="Forward two seconds"
+                      title="Forward 2 seconds"
+                    >
+                      ↷
+                    </button>
+                  </div>
+                  <span id="current-time" class="timecode">00:00.00</span
+                  ><span class="time-divider">/</span
+                  ><span id="total-time" class="timecode muted">00:00.00</span>
+                  <div class="transport-spacer"></div>
+                  <button
+                    id="mute-button"
+                    class="text-button"
+                    aria-label="Mute video"
+                  >
+                    Sound on</button
+                  ><button
+                    id="fullscreen-button"
+                    class="icon-button"
+                    aria-label="Fullscreen video"
+                  >
+                    ⛶
+                  </button>
+                </div>
+              </div>
+              <div class="timeline-card">
+                <div class="timeline-top">
+                  <span class="section-label">SOURCE TIMELINE</span>
+                  <div class="timeline-legend">
+                    <span><i class="kept-dot"></i>Keep</span
+                    ><span><i class="removed-dot"></i>Cut</span>
+                  </div>
+                  <button
+                    id="undo-button"
+                    class="icon-button"
+                    title="Undo (⌘Z)"
+                    aria-label="Undo edit"
+                    disabled
+                  >
+                    ↶</button
+                  ><button
+                    id="redo-button"
+                    class="icon-button"
+                    title="Redo (⇧⌘Z)"
+                    aria-label="Redo edit"
+                    disabled
+                  >
+                    ↷
+                  </button>
+                </div>
+                <div id="timeline-ruler" class="timeline-ruler"></div>
+                <div
+                  id="timeline"
+                  class="timeline"
+                  aria-label="Source timeline"
+                >
+                  <img id="waveform" alt="Audio waveform" draggable="false" />
+                  <div id="cut-regions"></div>
+                  <div id="playhead" class="playhead"></div>
+                </div>
+                <div
+                  id="subtitle-track"
+                  class="subtitle-track"
+                  aria-label="Subtitle timeline"
+                ></div>
+                <div class="timeline-bottom">
+                  <span id="cut-summary">No cuts yet</span
+                  ><button id="add-cut-button" class="text-button">
+                    ＋ Add cut at playhead
+                  </button>
+                </div>
+              </div>
+              <div class="under-preview">
+                <span>◌ Originals are always preserved</span
+                ><span id="edited-summary"></span>
+              </div>
+              <div id="export-result" class="export-result" hidden></div>
+              <div class="export-actions">
+                <input
+                  id="export-label"
+                  maxlength="120"
+                  placeholder="Name the next version (optional)"
+                  aria-label="Export version label"
+                /><button
+                  id="plain-export-button"
+                  class="button subtle"
+                  disabled
+                >
+                  ↗ Render plain cut
+                </button>
+              </div>
+              <section id="review-stage" class="review-stage" hidden>
+                <div class="preview-top">
+                  <span>ENCODED REVIEW CANDIDATE</span
+                  ><span id="review-version-label"></span>
+                </div>
+                <video
+                  id="review-video"
+                  controls
+                  playsinline
+                  preload="metadata"
+                  aria-label="Encoded review video"
+                ></video>
+                <div id="review-downloads" class="review-downloads"></div>
+                <p class="panel-hint">
+                  This is the saved export. Notes use its edited playback time.
+                </p>
+              </section>
+              <details class="brief-card">
+                <summary>Project brief & asset sources</summary>
+                <label
+                  >What should this clip communicate?<textarea
+                    id="brief-goal"
+                    maxlength="4000"
+                    placeholder="Audience, main point, and what must stay."
+                  ></textarea>
+                </label>
+                <label
+                  >Target duration & format<input
+                    id="brief-target"
+                    maxlength="200"
+                    placeholder="e.g. 45–60 seconds · vertical reel"
+                /></label>
+                <label
+                  >Usage-rights notes<textarea
+                    id="brief-rights"
+                    maxlength="4000"
+                    placeholder="Permissions or unresolved asset-rights questions."
+                  ></textarea>
+                </label>
+                <div class="list-heading">
+                  <span>REFERENCE & ASSET SOURCES</span
+                  ><button id="add-reference" class="text-button">
+                    ＋ Add source
+                  </button>
+                </div>
+                <div id="reference-list"></div>
+              </details>
+            </div>
+            <aside class="inspector">
+              <div class="panel-tabs" role="tablist">
+                <button
+                  id="cuts-tab"
+                  class="active"
+                  role="tab"
+                  aria-selected="true"
+                  aria-controls="cuts-panel"
+                >
+                  Cuts <span id="cut-count">0</span></button
+                ><button
+                  id="subtitles-tab"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="subtitles-panel"
+                >
+                  Captions <span id="subtitle-count">0</span></button
+                ><button
+                  id="review-tab"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="review-panel"
+                >
+                  Review
+                </button>
+              </div>
+              <div id="job-status" class="job-status" hidden></div>
+              <div id="conflict-banner" class="conflict-banner" hidden>
+                This project changed in chat. Your draft is saved in this
+                browser.<button id="reload-button">Load latest project</button>
+              </div>
+              <div id="cuts-panel" class="panel-body">
+                <div class="tool-heading">
+                  <span class="tool-icon">◌</span>
+                  <div>
+                    <h2>Find the quiet parts</h2>
+                    <p>Keep the flow. Lose the long pauses.</p>
+                  </div>
+                </div>
+                <fieldset id="silence-settings" class="settings">
+                  <label
+                    >Quiet threshold <output id="threshold-value">−35 dB</output
+                    ><input
+                      id="threshold"
+                      type="range"
+                      min="-60"
+                      max="-15"
+                      step="1"
+                      value="-35"
+                  /></label>
+                  <div class="two-settings">
+                    <label
+                      >Minimum pause
+                      <div class="unit-input">
+                        <input
+                          id="minimum"
+                          aria-label="Minimum silence duration"
+                          type="number"
+                          min="0.15"
+                          max="5"
+                          step="0.05"
+                          value="0.55"
+                        /><span>sec</span>
+                      </div></label
+                    ><label
+                      >Breathing room
+                      <div class="unit-input">
+                        <input
+                          id="padding"
+                          aria-label="Cut edge padding"
+                          type="number"
+                          min="0"
+                          max="0.6"
+                          step="0.02"
+                          value="0.12"
+                        /><span>sec</span>
+                      </div></label
+                    >
+                  </div>
+                  <button id="analyze-button" class="button analyze">
+                    ✧ Find & cut silence
+                  </button>
+                </fieldset>
+                <div class="list-heading">
+                  <span>REMOVED SECTIONS</span
+                  ><span id="removed-duration">0.0s</span>
+                </div>
+                <div id="cuts-list"></div>
+                <p class="panel-hint">
+                  Drag cut edges, type source times, or restore a section.
+                  Silence detection finds quiet audio; review the transcript to
+                  choose false starts and repeats.
+                </p>
+              </div>
+              <div id="subtitles-panel" class="panel-body" hidden>
+                <div class="tool-heading">
+                  <span class="tool-icon purple">▤</span>
+                  <div>
+                    <h2>Your words, on screen</h2>
+                    <p>Generate locally, then make them yours.</p>
+                  </div>
+                </div>
+                <div class="subtitle-actions">
+                  <select id="language" aria-label="Spoken language">
+                    <option value="auto">Detect language</option>
+                    <option value="en">English</option>
+                    <option value="ar">Arabic</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                    <option value="hi">Hindi</option></select
+                  ><button id="transcribe-button" class="button analyze">
+                    ✧ Generate
+                  </button>
+                </div>
+                <div class="caption-style">
+                  <label class="inline-label"
+                    >Show subtitles<input
+                      id="captions-enabled"
+                      type="checkbox"
+                      checked
+                  /></label>
+                  <div class="two-settings">
+                    <label
+                      >Text size <output id="font-size-value">48</output
+                      ><input
+                        id="font-size"
+                        type="range"
+                        min="24"
+                        max="80"
+                        value="48" /></label
+                    ><label
+                      >Position<select id="caption-position">
+                        <option value="bottom">Bottom</option>
+                        <option value="top">Top</option>
+                      </select></label
+                    >
+                  </div>
+                </div>
+                <div class="list-heading">
+                  <span>CAPTIONS <small>source time</small></span
+                  ><button id="add-caption-button" class="text-button">
+                    ＋ Add
+                  </button>
+                </div>
+                <div id="subtitles-list"></div>
+                <div class="subtitle-footer">
+                  <button id="import-srt-button" class="text-button">
+                    Import SRT</button
+                  ><a id="download-srt" href="#">Download SRT ↗</a>
+                </div>
+                <div id="transcript-downloads" class="subtitle-footer" hidden>
+                  <a id="source-transcript" href="#">Source transcript ↗</a
+                  ><a id="source-json" href="#">JSON ↗</a>
+                </div>
+                <p class="panel-hint">
+                  “Cut speech” removes that caption’s source interval. Listen to
+                  both joins and adjust the cut edges.
+                </p>
+              </div>
+              <div id="review-panel" class="panel-body" hidden>
+                <div class="tool-heading">
+                  <span class="tool-icon">↗</span>
+                  <div>
+                    <h2>Review the exact version</h2>
+                    <p>Save what should change, and why.</p>
+                  </div>
+                </div>
+                <label class="field-label" for="review-version"
+                  >Review candidate</label
+                ><select id="review-version"></select>
+                <div id="no-exports" class="empty-list">
+                  Render a plain cut first.<br />Every export keeps its own
+                  captions and edit decisions.
+                </div>
+                <form id="review-form" class="review-form" hidden>
+                  <div class="review-time-row">
+                    <label
+                      >Playback time<input
+                        id="review-time"
+                        value="00:00.00"
+                        aria-label="Review note time"
+                        required /></label
+                    ><button
+                      id="capture-review-time"
+                      type="button"
+                      class="text-button"
+                    >
+                      Use playhead
+                    </button>
+                  </div>
+                  <label
+                    >What should change?<textarea
+                      id="review-change"
+                      maxlength="4000"
+                      placeholder="Be specific about this moment."
+                      required
+                    ></textarea>
+                  </label>
+                  <label
+                    >Why?<textarea
+                      id="review-reason"
+                      maxlength="4000"
+                      placeholder="What will this correction improve?"
+                      required
+                    ></textarea>
+                  </label>
+                  <label
+                    >Remember this for<select id="review-scope">
+                      <option value="this_edit">This edit only</option>
+                      <option value="reusable">
+                        Future edits (reusable preference)
+                      </option>
+                    </select></label
+                  >
+                  <button class="button analyze" type="submit">
+                    Save timecoded note
+                  </button>
+                </form>
+                <div class="list-heading">
+                  <span>NOTES FOR THIS VERSION</span>
+                </div>
+                <div id="review-notes"></div>
+                <form id="history-form" class="history-form">
+                  <label
+                    >Search editing memory<input
+                      id="history-query"
+                      type="search"
+                      placeholder="Pacing, caption placement…" /></label
+                  ><label class="inline-label"
+                    >Reusable preferences only<input
+                      id="history-reusable"
+                      type="checkbox" /></label
+                  ><button type="submit" class="button subtle">
+                    Search history
+                  </button>
+                </form>
+                <div id="history-results"></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+    <input
+      id="video-input"
+      type="file"
+      accept="video/*,.mkv,.mts,.m2ts"
+      hidden
+    />
+    <input id="srt-input" type="file" accept=".srt" hidden />
+    <div id="upload-overlay" class="upload-overlay" hidden>
+      <div>
+        <span class="spinner"></span>
+        <h2>Adding your video</h2>
+        <p id="upload-progress">Copying to your local workspace…</p>
+      </div>
+    </div>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <dialog id="help-dialog">
+      <button id="close-help" class="dialog-close" aria-label="Close help">
+        ×
+      </button>
+      <div class="eyebrow">STORY → CUT → REVIEW</div>
+      <h2>Chat to direct.<br />Preview to fine-tune.</h2>
+      <p>
+        Import one clip, generate its source-timestamped transcript, and remove
+        false starts or repeated attempts without changing the meaning. Timeline
+        and caption edits save automatically.
+      </p>
+      <p>
+        Render a <strong>plain cut</strong> first to hear the joins. Then add
+        captions. <strong>Review</strong> plays the actual encoded candidate,
+        with timecoded notes tied to that version.
+      </p>
+      <p>
+        Each export has its own MP4, captions, source ranges, and asset-source
+        manifest. Mark feedback as reusable only when it should guide future
+        edits.
+      </p>
+      <p class="muted">
+        Recognition runs locally. Review speech, framing, captions, and audio in
+        the actual export before sharing. This app does not publish your videos.
+      </p>
+    </dialog>
+  </body>
+</html>
