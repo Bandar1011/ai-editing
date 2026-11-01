@@ -163,3 +163,46 @@ def test_rerunning_detection_preserves_manually_restored_audio(recording, tmp_pa
         )
     finally:
         editor.pool.shutdown(wait=True)
+
+
+def test_vertical_export_and_persistent_nondestructive_splits(recording, tmp_path):
+    with TestClient(
+        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+    ) as client:
+        editor = client.app.state.editor
+        p = wait_for(editor, editor.create(recording, recording.name)["id"])
+        route = f"/api/projects/{p['id']}"
+        body = {
+            k: p[k]
+            for k in (
+                "name",
+                "cuts",
+                "subtitles",
+                "subtitle_style",
+                "brief",
+                "references",
+            )
+        }
+        body.update(base_revision=p["revision"], split_points=[3, 1, 3])
+        saved = client.put(route, json=body)
+        assert saved.status_code == 200, saved.text
+        p = saved.json()
+        assert p["split_points"] == [1, 3]
+        assert p["cuts"] == []
+        assert client.get(route).json()["split_points"] == [1, 3]
+        body.update(base_revision=p["revision"], split_points=[6])
+        assert client.put(route, json=body).status_code == 400
+        assert (
+            client.post(route + "/export", json={"format": "vertical"}).status_code
+            == 200
+        )
+        p = wait_for(editor, p["id"])
+        result = p["exports"][-1]
+        actual = media.probe(
+            editor.repo.directory(p["id"]) / "exports" / result["file"]
+        )
+        assert actual["width"] * 16 == actual["height"] * 9
+        assert actual["fps"] == 24 and actual["has_audio"]
+        assert abs(actual["duration"] - 5) < 0.09
+        assert result["edit_state"]["split_points"] == [1, 3]
+        assert result["render_settings"]["format"] == "vertical"

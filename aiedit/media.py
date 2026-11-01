@@ -233,9 +233,11 @@ def transcribe(source: Path, directory: Path, model: Path, language: str) -> lis
         preset = (
             match.group()
             if match
-            else ("large.v" + large[1] + (".turbo" if large[2] else ""))
-            if large
-            else None
+            else (
+                ("large.v" + large[1] + (".turbo" if large[2] else ""))
+                if large
+                else None
+            )
         )
     if not preset:
         raise ValueError(
@@ -332,7 +334,8 @@ def export_video(
     burn_subtitles: bool,
     assets=None,
     plain=False,
+    format="source",
 ) -> Path:
     from .render import export_video as render
 
-    return render(project, source, output_dir, burn_subtitles, assets, plain)
+    return render(project, source, output_dir, burn_subtitles, assets, plain, format)

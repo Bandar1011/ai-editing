@@ -9,21 +9,13 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23111111'/%3E%3Cpath d='M12 11h16v4H16v3h10v4H16v3h12v4H12z' fill='white'/%3E%3C/svg%3E"
       rel="icon"
     />
-    <link href="/static/style.css?v=studio-2" rel="stylesheet" />
-    <script src="/static/app.js?v=studio-2" type="module"></script>
+    <link href="/static/style.css?v=simple-5" rel="stylesheet" />
+    <script src="/static/app.js?v=simple-5" type="module"></script>
   </head>
   <body>
     <div id="app">
       <header class="topbar">
         <a aria-label="Edit home" class="brand" href="/">Edit</a>
-        <button
-          id="projects-toggle"
-          class="button subtle"
-          aria-controls="project-sidebar"
-          aria-expanded="false"
-        >
-          Projects
-        </button>
         <div class="project-title-slot">
           <input
             aria-label="Project name"
@@ -35,30 +27,25 @@
         </div>
         <div class="header-end">
           <span class="save-status" id="save-status" role="status"></span
-          ><button
-            class="button subtle"
-            disabled=""
-            id="project-settings-button"
-          >
-            Project settings</button
-          ><button class="button subtle" id="import-button">Import video</button
+          ><button class="button subtle" id="import-button">
+            Replace video</button
           ><button class="button primary" disabled="" id="export-button">
             Export video
           </button>
+          <details class="more-menu">
+            <summary aria-label="More options">⋯</summary>
+            <div class="more-actions">
+              <button
+                class="button subtle"
+                disabled=""
+                id="project-settings-button"
+              >
+                Project settings</button
+              ><button class="text-button" id="help-button">Help</button>
+            </div>
+          </details>
         </div>
       </header>
-      <aside class="library" id="project-sidebar">
-        <div class="sidebar-label">
-          Projects<span id="project-count">0</span>
-        </div>
-        <div class="project-list" id="project-list"></div>
-        <button class="sidebar-add" hidden="" id="sidebar-import">
-          ＋ Add a video
-        </button>
-        <div class="sidebar-bottom">
-          <button class="text-button" id="help-button">Help</button>
-        </div>
-      </aside>
       <main>
         <section class="empty-state" id="empty-state">
           <h1>Add a video</h1>
@@ -77,26 +64,32 @@
             <div class="preview-column">
               <div class="preview-card">
                 <div class="preview-top">
-                  <span id="preview-ratio">9:16</span>
-                  <div
-                    aria-label="Preview mode"
-                    class="mode-switch"
-                    role="group"
-                  >
-                    <button class="active" id="edited-mode" aria-pressed="true">
-                      Edited</button
-                    ><button id="original-mode" aria-pressed="false">
-                      Original
+                  <div class="preview-status">
+                    <span class="preview-format">9:16</span>
+                    <div
+                      class="job-status"
+                      hidden=""
+                      id="job-status"
+                      role="status"
+                    ></div>
+                  </div>
+
+                  <div class="editor-tools">
+                    <button class="button subtle" id="open-captions">
+                      Captions</button
+                    ><button class="button subtle" id="open-media">Media</button
+                    ><button class="button subtle" id="auto-edit">
+                      Auto edit
                     </button>
                   </div>
                 </div>
                 <div class="canvas-area">
                   <div
+                    aria-label="Play or pause video"
                     class="video-stage"
                     id="video-stage"
                     role="button"
                     tabindex="0"
-                    aria-label="Play or pause video"
                   >
                     <video id="video" playsinline="" preload="metadata"></video>
                     <div
@@ -120,9 +113,6 @@
                       dir="auto"
                       id="caption-overlay"
                     ></div>
-                    <span class="cut-badge" hidden="" id="cut-badge"
-                      >Cut section</span
-                    >
                   </div>
                 </div>
                 <div class="transport">
@@ -165,10 +155,16 @@
                     ⛶
                   </button>
                 </div>
+                <div class="conflict-banner" hidden="" id="conflict-banner">
+                  This project changed in chat. Your draft is saved in this
+                  browser.<button id="reload-button">
+                    Load latest project
+                  </button>
+                </div>
               </div>
               <div class="timeline-card">
                 <div class="timeline-top">
-                  <span class="section-label">Source timeline</span>
+                  <span class="section-label">Timeline</span>
                   <div class="timeline-actions">
                     <button
                       aria-label="Undo edit"
@@ -186,8 +182,18 @@
                       title="Redo (⇧⌘Z)"
                     >
                       ↷</button
-                    ><button class="text-button" id="add-cut-button">
-                      Cut selection
+                    ><button
+                      class="button subtle"
+                      id="split-button"
+                      title="Split at playhead (⌘B)"
+                    >
+                      Split</button
+                    ><button
+                      class="button subtle"
+                      disabled=""
+                      id="delete-clip-button"
+                    >
+                      Delete
                     </button>
                   </div>
                   <label class="timeline-zoom"
@@ -219,25 +225,19 @@
                         role="group"
                       >
                         <div id="video-clips"></div>
-                        <div class="cut-regions" id="video-cut-regions"></div>
                       </div>
                     </div>
                     <div class="track-row" id="voice-row">
                       <span class="track-label">Original audio</span>
                       <div
-                        aria-label="Source timeline"
+                        aria-label="Original audio track"
                         class="timeline timeline-lane"
                         id="timeline"
                       >
-                        <img
-                          alt="Audio waveform"
-                          draggable="false"
-                          id="waveform"
-                        />
-                        <div id="cut-regions"></div>
+                        <div id="voice-clips"></div>
                       </div>
                     </div>
-                    <div class="track-row" id="caption-row">
+                    <div class="track-row" hidden="" id="caption-row">
                       <span class="track-label">Captions</span>
                       <div
                         aria-label="Subtitle timeline"
@@ -245,7 +245,7 @@
                         id="subtitle-track"
                       ></div>
                     </div>
-                    <div class="track-row">
+                    <div class="track-row" hidden="" id="overlay-row">
                       <span class="track-label">Overlays</span>
                       <div
                         aria-label="Overlay track"
@@ -254,7 +254,7 @@
                         role="group"
                       ></div>
                     </div>
-                    <div class="track-row">
+                    <div class="track-row" hidden="" id="effect-row">
                       <span class="track-label">Effects</span>
                       <div
                         aria-label="Effect track"
@@ -263,7 +263,7 @@
                         role="group"
                       ></div>
                     </div>
-                    <div class="track-row">
+                    <div class="track-row" hidden="" id="music-row">
                       <span class="track-label">Music</span>
                       <div
                         aria-label="Music track"
@@ -282,21 +282,17 @@
                       ></div>
                     </div>
                     <div class="playhead-plane">
-                      <div
-                        id="range-selection"
-                        class="range-selection"
-                        hidden
-                      ></div>
                       <div class="playhead" id="playhead"></div>
                     </div>
                   </div>
                 </div>
                 <div class="timeline-bottom">
-                  <span id="range-label">Drag to select</span
-                  ><span id="cut-summary">No cuts yet</span>
+                  <span id="range-label"></span
+                  ><button class="text-button" hidden="" id="restore-video">
+                    Restore full video
+                  </button>
                 </div>
               </div>
-
               <section class="review-stage" hidden="" id="review-stage">
                 <div class="preview-top">
                   <span>Export preview</span
@@ -316,23 +312,15 @@
                 <div class="review-downloads" id="review-downloads"></div>
               </section>
             </div>
-            <aside class="inspector">
+            <aside class="inspector" hidden="" id="inspector">
               <div class="panel-tabs" role="tablist">
                 <button
-                  aria-controls="cuts-panel"
-                  aria-selected="true"
-                  class="active"
-                  id="cuts-tab"
-                  role="tab"
-                >
-                  Cuts <span id="cut-count">0</span></button
-                ><button
                   aria-controls="subtitles-panel"
                   aria-selected="false"
                   id="subtitles-tab"
                   role="tab"
                 >
-                  Captions <span id="subtitle-count">0</span></button
+                  Captions</button
                 ><button
                   aria-controls="visuals-panel"
                   aria-selected="false"
@@ -346,76 +334,17 @@
                   id="review-tab"
                   role="tab"
                 >
-                  Review
+                  Export
+                </button>
+                <button
+                  aria-label="Close panel"
+                  class="icon-button"
+                  id="close-inspector"
+                >
+                  ×
                 </button>
               </div>
-              <div class="job-status" hidden="" id="job-status"></div>
-              <div class="conflict-banner" hidden="" id="conflict-banner">
-                This project changed in chat. Your draft is saved in this
-                browser.<button id="reload-button">Load latest project</button>
-              </div>
-              <div class="panel-body" id="cuts-panel">
-                <button class="button analyze" id="prepare-button">
-                  Create first cut</button
-                ><button class="button subtle" id="analyze-button">
-                  Remove pauses
-                </button>
 
-                <details class="retakes">
-                  <summary>Compare takes</summary>
-                  <div id="retake-list"></div>
-                </details>
-
-                <details class="controls-group">
-                  <summary>Pause settings</summary>
-                  <fieldset class="settings" id="silence-settings">
-                    <label
-                      >Quiet threshold
-                      <output id="threshold-value">−35 dB</output
-                      ><input
-                        id="threshold"
-                        max="-15"
-                        min="-60"
-                        step="1"
-                        type="range"
-                        value="-35"
-                    /></label>
-                    <div class="two-settings">
-                      <label
-                        >Minimum pause
-                        <div class="unit-input">
-                          <input
-                            aria-label="Minimum silence duration"
-                            id="minimum"
-                            max="5"
-                            min="0.15"
-                            step="0.05"
-                            type="number"
-                            value="0.55"
-                          /><span>sec</span>
-                        </div></label
-                      ><label
-                        >Keep around speech
-                        <div class="unit-input">
-                          <input
-                            aria-label="Cut edge padding"
-                            id="padding"
-                            max="0.6"
-                            min="0"
-                            step="0.02"
-                            type="number"
-                            value="0.12"
-                          /><span>sec</span>
-                        </div></label
-                      >
-                    </div>
-                  </fieldset>
-                </details>
-                <div class="list-heading">
-                  <span>Cuts</span><span id="removed-duration">0.0s</span>
-                </div>
-                <div id="cuts-list"></div>
-              </div>
               <div class="panel-body" hidden="" id="subtitles-panel">
                 <div class="subtitle-actions">
                   <select aria-label="Spoken language" id="language">
@@ -495,7 +424,6 @@
                   </button>
                 </div>
                 <div id="subtitles-list"></div>
-
                 <details class="controls-group">
                   <summary>Caption files</summary>
                   <div class="subtitle-footer">
@@ -641,52 +569,53 @@
                   >Exported video</label
                 ><select id="review-version"></select>
                 <div class="empty-list" id="no-exports">No exports yet</div>
-                <form class="review-form" hidden="" id="review-form">
-                  <div class="review-time-row">
+                <details class="controls-group">
+                  <summary>Leave feedback</summary>
+                  <form class="review-form" hidden="" id="review-form">
+                    <div class="review-time-row">
+                      <label
+                        >Playback time<input
+                          aria-label="Review note time"
+                          id="review-time"
+                          required=""
+                          value="00:00.00" /></label
+                      ><button
+                        class="text-button"
+                        id="capture-review-time"
+                        type="button"
+                      >
+                        Use playhead
+                      </button>
+                    </div>
                     <label
-                      >Playback time<input
-                        aria-label="Review note time"
-                        id="review-time"
+                      >What should change?<textarea
+                        id="review-change"
+                        maxlength="4000"
                         required=""
-                        value="00:00.00" /></label
-                    ><button
-                      class="text-button"
-                      id="capture-review-time"
-                      type="button"
+                      ></textarea>
+                    </label>
+                    <label
+                      >Why?<textarea
+                        id="review-reason"
+                        maxlength="4000"
+                        required=""
+                      ></textarea>
+                    </label>
+                    <label
+                      >Remember this for<select id="review-scope">
+                        <option value="this_edit">This edit only</option>
+                        <option value="reusable">
+                          Future edits (reusable preference)
+                        </option>
+                      </select></label
                     >
-                      Use playhead
+                    <button class="button analyze" type="submit">
+                      Save timecoded note
                     </button>
-                  </div>
-                  <label
-                    >What should change?<textarea
-                      id="review-change"
-                      maxlength="4000"
-                      required=""
-                    ></textarea>
-                  </label>
-                  <label
-                    >Why?<textarea
-                      id="review-reason"
-                      maxlength="4000"
-                      required=""
-                    ></textarea>
-                  </label>
-                  <label
-                    >Remember this for<select id="review-scope">
-                      <option value="this_edit">This edit only</option>
-                      <option value="reusable">
-                        Future edits (reusable preference)
-                      </option>
-                    </select></label
-                  >
-                  <button class="button analyze" type="submit">
-                    Save timecoded note
-                  </button>
-                </form>
-                <div class="list-heading">
-                  <span>Feedback</span>
-                </div>
-                <div id="review-notes"></div>
+                  </form>
+                </details>
+
+                <div hidden="" id="review-notes"></div>
                 <details class="controls-group">
                   <summary>Saved feedback</summary>
                   <form class="history-form" id="history-form">
@@ -704,7 +633,6 @@
                   </form>
                   <div id="history-results"></div>
                 </details>
-
                 <details class="controls-group">
                   <summary>Export options</summary>
                   <div class="export-actions">
@@ -718,7 +646,7 @@
                       disabled=""
                       id="plain-export-button"
                     >
-                      Export plain cut
+                      Export without add-ons
                     </button>
                   </div>
                   <div class="export-result" hidden="" id="export-result"></div>
@@ -735,12 +663,7 @@
       hidden=""
       id="asset-file"
       type="file"
-    /><input
-      accept="video/*,.mkv,.mts,.m2ts"
-      hidden=""
-      id="video-input"
-      type="file"
-    />
+    /><input accept="video/*" hidden="" id="video-input" type="file" />
     <input accept=".srt" hidden="" id="srt-input" type="file" />
     <div class="upload-overlay" hidden="" id="upload-overlay">
       <div>
@@ -754,13 +677,13 @@
       <button aria-label="Close help" class="dialog-close" id="close-help">
         ×
       </button>
-
       <h2>Edit your video</h2>
-
       <p>
-        Import a video. Cut pauses and repeats, edit captions, and add media
-        from the timeline. Export a version to review it.
+        Select a clip and choose Split at the playhead. Delete removes the
+        selected clip. Drag an edge to trim or extend it. Double-click an edge
+        to restore it.
       </p>
+      <p>Space: play or pause. ⌘B: split. Delete: remove clip. ⌘Z: undo.</p>
     </dialog>
     <dialog id="project-dialog">
       <div class="dialog-heading">
@@ -827,7 +750,6 @@
                 id="story-app_bundle_id"
                 maxlength="200"
             /></label>
-
             <details>
               <summary>Save measured hook performance</summary>
               <label
@@ -857,6 +779,63 @@
           <span id="edited-summary"></span>
         </details>
       </div>
+      <details class="controls-group">
+        <summary>Automatic editing</summary>
+        <div class="auto-edit-settings" id="cuts-panel">
+          <button class="button analyze" id="prepare-button">Auto edit</button
+          ><button class="button subtle" id="analyze-button">
+            Remove pauses
+          </button>
+          <details class="retakes">
+            <summary>Compare takes</summary>
+            <div id="retake-list"></div>
+          </details>
+          <details class="controls-group">
+            <summary>Pause settings</summary>
+            <fieldset class="settings" id="silence-settings">
+              <label
+                >Quiet threshold <output id="threshold-value">−35 dB</output
+                ><input
+                  id="threshold"
+                  max="-15"
+                  min="-60"
+                  step="1"
+                  type="range"
+                  value="-35"
+              /></label>
+              <div class="two-settings">
+                <label
+                  >Minimum pause
+                  <div class="unit-input">
+                    <input
+                      aria-label="Minimum silence duration"
+                      id="minimum"
+                      max="5"
+                      min="0.15"
+                      step="0.05"
+                      type="number"
+                      value="0.55"
+                    /><span>sec</span>
+                  </div></label
+                ><label
+                  >Keep around speech
+                  <div class="unit-input">
+                    <input
+                      aria-label="Cut edge padding"
+                      id="padding"
+                      max="0.6"
+                      min="0"
+                      step="0.02"
+                      type="number"
+                      value="0.12"
+                    /><span>sec</span>
+                  </div></label
+                >
+              </div>
+            </fieldset>
+          </details>
+        </div>
+      </details>
     </dialog>
   </body>
 </html>

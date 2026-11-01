@@ -115,11 +115,13 @@ Save with the latest `base_revision`; preserve all unrelated fields. Production 
 
 Overlays and punch-ins use source times; music is continuous on the edited timeline. Video references are muted by default. Set an overlay's `audio` to `true` and `volume` from 0 to 1 to include its audio. Audio-only assets can also be timed overlays, for effects or additional speech, with `start`, `end`, and `asset_in` controlling their source range. Their audio follows the same cuts as the main clip. Layouts are `top`, `bottom`, or `full`; top cards reserve space for the face, but placement still requires visual review. Use occasional 1.1× punch-ins when they add emphasis. Do not insert a change every three seconds mechanically. Music loops, fades at the ends, and can duck under the voice. Browser audio preview is approximate; encoded mixing is authoritative.
 
-The browser uses a monochrome workspace with portrait and landscape previews. Its labeled source tracks show video, original audio, captions, overlays, effects, music, and added audio. Drag across the video or original-audio track to select a range, then use **Cut selection** or Delete. Existing cut edges remain draggable. Selecting a caption or added clip opens its controls. Zoom the timeline for longer recordings. Secondary project settings, caption style, downloads, and capture tools stay collapsed until needed.
+The browser edits one 9:16 vertical video. A fresh clip shows only video and original audio. Captions, overlays, effects, music, and added audio each get one track only while they have content. The timeline closes removed gaps. Click a clip, position the playhead, and use **Split** (⌘B), then **Delete** to remove a piece. Drag a clip edge to trim or extend it into available source footage; double-click an edge to restore it. **Restore full video** resets trimming and splits; undo restores the prior edit. Source media and source-timed captions and overlays remain unchanged. Split seams are persisted as `split_points` on the source, separately from the removal ranges in `cuts`. Panels open only when needed; the editor has no project picker or Edited/Original switch.
+
+Browser exports pass `format: "vertical"`, producing an exact 9:16 center crop and retaining frame rate. Direct API calls default to `format: "source"` for compatibility; the CLI accepts `--format vertical`. Review the crop before exporting, especially for wide footage.
 
 ```sh
-python3 scripts/editor.py export PROJECT_ID --plain --label "Story review"
-python3 scripts/editor.py export PROJECT_ID --label "Captioned review"
+python3 scripts/editor.py export PROJECT_ID --format vertical --plain --label "Story review"
+python3 scripts/editor.py export PROJECT_ID --format vertical --label "Captioned review"
 ```
 
 Plain exports omit captions, overlays, punch-ins, and music. Final candidates freeze production decisions, asset provenance, captions, source ranges, and output checksums. Review the encoded file for missing words, bad joins, caption collisions, incorrect app screens, and audio balance. Save specific corrections against that export.

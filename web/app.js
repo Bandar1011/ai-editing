@@ -1,4 +1,12 @@
-import { createProduction } from "./production.js?v=studio-2";
+import {
+  keptRanges,
+  clipsFor,
+  sourceAt,
+  cutsForClips,
+  trimClip,
+  mappedSpans,
+} from "./timeline.mjs?v=simple-5";
+import { createProduction } from "./production.js?v=simple-5";
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s ?? "").replace(
@@ -14,9 +22,9 @@ const video = $("video");
 let project = null,
   projects = [],
   health = {},
-  tab = "cuts",
+  tab = null,
   mode = "edited";
-let selectedCut = null,
+let selectedClip = null,
   selectedSubtitle = null,
   undo = [],
   redo = [];
@@ -30,9 +38,9 @@ let conflicted = false,
   dragging = null,
   toastTimer;
 let reviewFile = null;
-let selectedRange = null;
 let timelineFrame = null;
 let activeCaptionIds = new Set();
+let lastTrimTarget = null;
 const ownJobs = new Set();
 const production = createProduction({
   getProject: () => project,
@@ -54,7 +62,7 @@ const production = createProduction({
   parseTime,
   video,
   outputTime,
-  isEdited: () => mode === "edited",
+  isEdited: () => mode === "edited" && clips().length > 0,
   showOriginal: () => setMode("original"),
   refreshTimeline: () => {
     if (project) renderTimeline();
@@ -64,9 +72,10 @@ const production = createProduction({
 
 function time(value, precise = true) {
   const n = Math.max(0, Number(value) || 0);
-  const minutes = Math.floor(n / 60),
-    seconds = Math.floor(n % 60),
-    centiseconds = Math.floor((n % 1) * 100 + 0.001);
+  const ticks = Math.floor(n * 100 + 0.000001),
+    minutes = Math.floor(ticks / 6000),
+    seconds = Math.floor(ticks / 100) % 60,
+    centiseconds = ticks % 100;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}${precise ? "." + String(centiseconds).padStart(2, "0") : ""}`;
 }
 function parseTime(value) {
@@ -106,6 +115,7 @@ async function api(path, options = {}) {
 function editable(p = project) {
   return {
     name: p.name,
+    split_points: clone(p.split_points || []),
     cuts: clone(p.cuts),
     subtitles: clone(p.subtitles),
     subtitle_style: clone(p.subtitle_style),
@@ -237,21 +247,14 @@ async function saveNow() {
 
 async function loadProjects() {
   projects = await api("/api/projects");
-  $("project-count").textContent = projects.length;
-  $("project-list").innerHTML = projects
-    .map(
-      (p) =>
-        `<button class="project-item ${project?.id === p.id ? "active" : ""}" data-project="${p.id}" title="${esc(p.name)}"><span class="project-item-icon" aria-hidden="true">▷</span><div><strong>${esc(p.name)}</strong><small>${time(p.media.duration, false)}</small></div></button>`,
-    )
-    .join("");
 }
 async function openProject(id, discard = false) {
   if (project && !discard) await saveNow();
   video.pause();
   const p = await api(`/api/projects/${id}`);
   project = p;
-  $("project-sidebar").classList.remove("open");
-  $("projects-toggle").setAttribute("aria-expanded", "false");
+  localStorage.setItem("aiedit-active-project", p.id);
+  $("import-button").textContent = "Replace video";
   reviewFile = p.exports.at(-1)?.file || null;
   $("history-results").innerHTML = "";
   dirty = false;
@@ -259,8 +262,8 @@ async function openProject(id, discard = false) {
   editSequence = 0;
   undo = [];
   redo = [];
-  selectedCut = selectedSubtitle = null;
-  setRange(null);
+  selectedClip = selectedSubtitle = null;
+  setTab(null);
   savedEditable = editable(p);
   $("conflict-banner").hidden = true;
   history.replaceState(null, "", `?project=${p.id}`);
@@ -280,20 +283,7 @@ function renderProject() {
   $("project-name").value = project.name;
   $("project-name").disabled = false;
   $("project-settings-button").disabled = false;
-  const wide = project.media.width > project.media.height;
-  $("editor").classList.toggle("landscape", wide);
-  $("editor").style.setProperty(
-    "--preview-ratio",
-    wide ? project.media.width / project.media.height : 9 / 16,
-  );
-  const ratio = project.media.width / project.media.height;
-  $("preview-ratio").textContent = wide
-    ? Math.abs(ratio - 16 / 9) < 0.02
-      ? "16:9"
-      : Math.abs(ratio - 4 / 3) < 0.02
-        ? "4:3"
-        : "Original"
-    : "9:16";
+  $("editor").style.setProperty("--preview-ratio", 9 / 16);
   $("project-details").innerHTML =
     `${project.media.width} × ${project.media.height} <span class="muted">/</span> ${Math.round(project.media.fps * 100) / 100} fps<br>${esc(project.filename)}`;
   const address = `/api/projects/${project.id}/media`;
@@ -310,9 +300,6 @@ function renderProject() {
     project.jobs.preview?.status === "error"
       ? "Preview could not be prepared. Check the operation message."
       : '<span class="spinner"></span>Preparing your preview…';
-  $("waveform").hidden = !project.waveform_ready;
-  if (project.waveform_ready)
-    $("waveform").src = `/api/projects/${project.id}/waveform`;
   $("threshold").value = project.silence_options.threshold_db;
   $("threshold-value").textContent =
     `${project.silence_options.threshold_db} dB`;
@@ -329,11 +316,22 @@ function renderProject() {
   for (const key of ["goal", "target", "rights"])
     $(`brief-${key}`).value = project.brief[key];
   renderReferences();
-  $("timeline-ruler").innerHTML = Array.from(
-    { length: 7 },
-    (_, i) =>
-      `<span style="left:${(i / 6) * 100}%">${time((duration() * i) / 6, false)}</span>`,
-  ).join("");
+  const available = clips();
+  if (
+    mode === "edited" &&
+    Number.isFinite(video.duration) &&
+    available.length &&
+    !available.some(
+      (c) => video.currentTime >= c.start && video.currentTime < c.end,
+    )
+  ) {
+    const next =
+      available.find((c) => c.start > video.currentTime) || available.at(-1);
+    video.currentTime =
+      next.start > video.currentTime
+        ? next.start
+        : Math.max(next.start, next.end - 1 / project.media.fps);
+  }
   renderLists();
   renderTimeline();
   renderJobs();
@@ -351,6 +349,7 @@ function renderExport() {
   if (!exported) return;
   const current = {
     cuts: project.cuts,
+    split_points: project.split_points,
     subtitles: project.subtitles,
     subtitle_style: project.subtitle_style,
     overlays: project.overlays,
@@ -360,29 +359,24 @@ function renderExport() {
   };
   const matches =
     exported.edit_state &&
-    JSON.stringify(exported.edit_state) === JSON.stringify(current) &&
+    Object.entries(current).every(
+      ([key, value]) =>
+        JSON.stringify(
+          exported.edit_state[key] ?? (key === "split_points" ? [] : null),
+        ) === JSON.stringify(value),
+    ) &&
     JSON.stringify(exported.brief) === JSON.stringify(project.brief) &&
     JSON.stringify(exported.references) === JSON.stringify(project.references);
   $("export-result").innerHTML =
     `<span>${matches ? "✓ Export ready" : "Previous export"} <span class="muted">· ${time(exported.duration, false)}</span></span><a download href="/api/projects/${project.id}/exports/${exported.file}">Download video ↗</a>`;
 }
 function renderLists() {
-  $("cut-count").textContent = project.cuts.filter((c) => c.enabled).length;
-  $("subtitle-count").textContent = project.subtitles.length;
-  $("cuts-list").innerHTML =
-    [...project.cuts]
-      .sort((a, b) => a.start - b.start)
-      .map(
-        (c, i) =>
-          `<div class="cut-row ${c.enabled ? "" : "disabled"} ${selectedCut === c.id ? "selected" : ""}" data-cut="${c.id}"><div class="cut-row-top"><input type="checkbox" aria-label="Enable cut ${i + 1}" data-cut-toggle="${c.id}" ${c.enabled ? "checked" : ""}><strong>${{ silence: "Pause", speech: "Speech gap", retake: "Retake", filler: "Hesitation", manual: "Cut" }[c.kind] || "Cut"} ${i + 1}</strong><small>${(c.end - c.start).toFixed(2)}s</small><button class="remove-item" data-remove-cut="${c.id}" aria-label="${c.enabled ? "Restore" : "Cut"} section ${i + 1}">${c.enabled ? "Restore" : "Cut"}</button></div><div class="times"><label>Start</label><input class="time-input" aria-label="Cut ${i + 1} start" value="${time(c.start)}" data-cut-field="start" data-id="${c.id}"><label>End</label><input class="time-input" aria-label="Cut ${i + 1} end" value="${time(c.end)}" data-cut-field="end" data-id="${c.id}"><button class="seek-item" data-seek="${c.start}" aria-label="Preview cut ${i + 1}">▷</button></div></div>`,
-      )
-      .join("") || '<div class="empty-list">No cuts</div>';
   $("subtitles-list").innerHTML =
     [...project.subtitles]
       .sort((a, b) => a.start - b.start)
       .map(
         (c, i) =>
-          `<div class="subtitle-row" data-subtitle="${c.id}"><div class="times"><button class="seek-item" data-seek="${c.start}" aria-label="Preview subtitle ${i + 1}">▷</button><input class="time-input" aria-label="Subtitle ${i + 1} start" data-subtitle-field="start" data-id="${c.id}" value="${time(c.start)}"><span class="muted">→</span><input class="time-input" aria-label="Subtitle ${i + 1} end" data-subtitle-field="end" data-id="${c.id}" value="${time(c.end)}"><button class="remove-item" data-remove-subtitle="${c.id}" aria-label="Remove subtitle ${i + 1}">×</button></div><textarea dir="auto" aria-label="Subtitle ${i + 1} text" placeholder="Type a subtitle…" maxlength="5000" data-caption-text="${c.id}">${esc(c.text)}</textarea><button class="text-button cut-speech" data-cut-speech="${c.id}" aria-label="Cut speech ${i + 1}">Cut this speech</button></div>`,
+          `<div class="subtitle-row" data-subtitle="${c.id}"><div class="times"><button class="seek-item" data-seek="${c.start}" aria-label="Preview subtitle ${i + 1}">▷</button><input class="time-input" aria-label="Subtitle ${i + 1} start" data-subtitle-field="start" data-id="${c.id}" value="${time(c.start)}"><span class="muted">→</span><input class="time-input" aria-label="Subtitle ${i + 1} end" data-subtitle-field="end" data-id="${c.id}" value="${time(c.end)}"><button class="remove-item" data-remove-subtitle="${c.id}" aria-label="Remove subtitle ${i + 1}">×</button></div><textarea dir="auto" aria-label="Subtitle ${i + 1} text" placeholder="Type a subtitle…" maxlength="5000" data-caption-text="${c.id}">${esc(c.text)}</textarea></div>`,
       )
       .join("") || '<div class="empty-list">No captions</div>';
 }
@@ -394,14 +388,32 @@ function scheduleTimeline() {
   });
 }
 function sourceRanges() {
-  const kept = [];
-  let start = 0;
-  for (const cut of mergedCuts()) {
-    if (cut.start > start) kept.push([start, cut.start]);
-    start = cut.end;
-  }
-  if (start < duration()) kept.push([start, duration()]);
-  return kept;
+  return keptRanges(duration(), project?.cuts || []);
+}
+function clips() {
+  return project
+    ? clipsFor(duration(), project.cuts, project.split_points)
+    : [];
+}
+function editDuration() {
+  return clips().reduce((sum, c) => sum + c.length, 0);
+}
+function updateClipActions() {
+  const all = clips(),
+    t = video.currentTime;
+  $("split-button").disabled =
+    busy() ||
+    conflicted ||
+    !all.some((c) => t > c.start + 0.04 && t < c.end - 0.04);
+  $("delete-clip-button").disabled =
+    selectedClip === null || !all[selectedClip] || busy() || conflicted;
+  $("restore-video").disabled = busy() || conflicted;
+  $("restore-video").hidden =
+    !project?.cuts.some((c) => c.enabled) && !project?.split_points?.length;
+  $("range-label").textContent =
+    selectedClip !== null && all[selectedClip]
+      ? `Clip ${selectedClip + 1} · ${time(all[selectedClip].length)}`
+      : "";
 }
 function renderTimeline() {
   if (timelineFrame !== null) {
@@ -409,91 +421,130 @@ function renderTimeline() {
     timelineFrame = null;
   }
   if (!project) return;
-  setRange(selectedRange);
-  const d = duration(),
+  const all = clips(),
+    d = duration(),
     assets = production.getAssets();
+  if (!all[selectedClip]) selectedClip = null;
   const style = (a, b) =>
     `left:${(a / d) * 100}%;width:${((b - a) / d) * 100}%`;
-  const cuts = project.cuts
+  const target = (d / Math.max(1, $("timeline").clientWidth)) * 110;
+  const step =
+    [
+      0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800,
+      3600, 7200, 14400,
+    ].find((n) => n >= target) || 14400;
+  $("timeline-ruler").innerHTML = Array.from(
+    { length: Math.floor(d / step) + 1 },
+    (_, i) =>
+      `<span style="left:${((i * step) / d) * 100}%">${time(i * step, step < 1)}</span>`,
+  ).join("");
+  $("video-clips").innerHTML = all
     .map(
-      (c) =>
-        `<div class="cut-region ${c.enabled ? "" : "disabled"} ${c.id === selectedCut ? "selected" : ""}" data-region="${c.id}" style="${style(c.start, c.end)}" title="Cut ${time(c.start)}–${time(c.end)}"><div class="edge start" data-edge="start" data-id="${c.id}"></div><div class="edge end" data-edge="end" data-id="${c.id}"></div></div>`,
-    )
-    .join("");
-  $("cut-regions").innerHTML = cuts;
-  $("video-cut-regions").innerHTML = cuts;
-  $("video-clips").innerHTML =
-    `<div class="track-clip video-clip" style="left:0;width:100%" title="${esc(project.filename)}">${esc(project.filename)}</div>`;
-  $("subtitle-track").innerHTML = project.subtitles
-    .map(
-      (c) =>
-        `<button type="button" class="subtitle-segment ${c.id === selectedSubtitle ? "selected" : ""}" data-cue="${c.id}" style="${style(c.start, c.end)}" title="${esc(c.text)} · ${time(c.start)}" aria-label="Caption: ${esc(c.text)}">${esc(c.text)}</button>`,
-    )
-    .join("");
-  $("overlay-track").innerHTML = project.overlays
-    .filter((o) => assets.find((a) => a.id === o.asset_id)?.kind !== "audio")
-    .map((o) => {
-      const a = assets.find((a) => a.id === o.asset_id);
-      return `<button type="button" class="track-clip ${o.enabled ? "" : "disabled"}" data-track-overlay="${o.id}" style="${style(o.start, o.end)}" title="${esc(a?.name || "Overlay")}">${esc(a?.name || "Overlay")}</button>`;
-    })
-    .join("");
-  $("effect-track").innerHTML = project.punches
-    .map(
-      (p) =>
-        `<button type="button" class="track-clip effect-clip ${p.enabled ? "" : "disabled"}" data-track-effect="${p.id}" style="${style(p.start, p.end)}" title="Zoom ${p.scale}×">Zoom ${p.scale}×</button>`,
+      (c, i) =>
+        `<div class="track-clip video-segment ${i === selectedClip ? "selected" : ""}" data-clip="${i}" style="${style(c.output, c.output + c.length)}" title="${esc(project.filename)} · ${time(c.start)}–${time(c.end)}"><button class="clip-select" data-select-clip="${i}" aria-label="Select video clip ${i + 1}">${esc(project.filename)}</button><span class="trim-handle start" data-trim="start" title="Drag to trim. Double-click to restore." role="slider" tabindex="0" aria-label="Clip ${i + 1} start" aria-valuemin="${i ? all[i - 1].end : 0}" aria-valuemax="${c.end - 0.04}" aria-valuenow="${c.start}" aria-valuetext="${time(c.start)}"></span><span class="trim-handle end" data-trim="end" title="Drag to trim. Double-click to restore." role="slider" tabindex="0" aria-label="Clip ${i + 1} end" aria-valuemin="${c.start + 0.04}" aria-valuemax="${i < all.length - 1 ? all[i + 1].start : duration()}" aria-valuenow="${c.end}" aria-valuetext="${time(c.end)}"></span></div>`,
     )
     .join("");
   const px = $("timeline").clientWidth / d;
+  $("voice-clips").innerHTML = all
+    .map(
+      (c, i) =>
+        `<button class="track-clip voice-segment ${i === selectedClip ? "selected" : ""}" data-select-clip="${i}" style="${style(c.output, c.output + c.length)}" aria-label="Select original audio clip ${i + 1}">${project.waveform_ready ? `<i class="audio-wave" style="background-image:url('/api/projects/${project.id}/waveform');background-size:${duration() * px}px 100%;background-position:${-c.start * px}px 0"></i>` : ""}</button>`,
+    )
+    .join("");
+  $("voice-row").hidden = !project.media.has_audio;
+  const spans = (item, join = true) => {
+    const mapped = mappedSpans(item.start, item.end, all);
+    if (!join) return mapped;
+    return mapped.reduce((result, span) => {
+      const last = result.at(-1);
+      if (last && Math.abs(last.end - span.start) < 0.001) last.end = span.end;
+      else result.push({ ...span });
+      return result;
+    }, []);
+  };
+  $("subtitle-track").innerHTML = project.subtitle_style.enabled
+    ? project.subtitles
+        .flatMap((c) =>
+          spans(c).map(
+            (s) =>
+              `<button class="subtitle-segment ${c.id === selectedSubtitle ? "selected" : ""}" data-cue="${c.id}" style="${style(s.start, s.end)}" title="${esc(c.text)}" aria-label="Caption: ${esc(c.text || "Empty caption")}">${esc(c.text || "Caption")}</button>`,
+          ),
+        )
+        .join("")
+    : "";
+  $("overlay-track").innerHTML = project.overlays
+    .filter(
+      (o) =>
+        o.enabled && assets.find((a) => a.id === o.asset_id)?.kind !== "audio",
+    )
+    .flatMap((o) =>
+      spans(o).map(
+        (s) =>
+          `<button class="track-clip" data-track-overlay="${o.id}" style="${style(s.start, s.end)}">${esc(assets.find((a) => a.id === o.asset_id)?.name || "Overlay")}</button>`,
+      ),
+    )
+    .join("");
+  $("effect-track").innerHTML = project.punches
+    .filter((p) => p.enabled && p.scale > 1)
+    .flatMap((p) =>
+      spans(p).map(
+        (s) =>
+          `<button class="track-clip effect-clip" data-track-effect="${p.id}" style="${style(s.start, s.end)}">Zoom ${p.scale}×</button>`,
+      ),
+    )
+    .join("");
   function audioClip(asset, start, end, offset, attrs, name) {
     const wave =
       asset?.has_audio && asset.duration > 0
         ? `background-image:url('/api/assets/${asset.id}/waveform');background-repeat:repeat-x;background-size:${asset.duration * px}px 100%;background-position:${-(offset % asset.duration) * px}px 0`
         : "";
-    return `<button type="button" class="track-clip audio-clip" ${attrs} style="${style(start, end)}" title="${esc(name)}"><i class="audio-wave" style="${wave}"></i><span>${esc(name)}</span></button>`;
+    return `<button class="track-clip audio-clip" ${attrs} style="${style(start, end)}" title="${esc(name)}"><i class="audio-wave" style="${wave}"></i><span>${esc(name)}</span></button>`;
   }
   const m = project.music,
     ma = assets.find((a) => a.id === m?.asset_id);
-  $("music-track").innerHTML = m?.enabled
-    ? sourceRanges()
-        .map(([a, b]) =>
-          audioClip(
-            ma,
-            a,
-            b,
-            m.offset + outputTime(a),
-            'data-track-music="true"',
-            ma?.name || "Music",
-          ),
+  $("music-track").innerHTML =
+    m?.enabled && ma && all.length
+      ? audioClip(
+          ma,
+          0,
+          editDuration(),
+          m.offset,
+          'data-track-music="true"',
+          ma.name,
         )
-        .join("")
-    : "";
-  const audioOverlays = project.overlays.filter(
-    (o) =>
-      o.enabled &&
-      o.audio &&
-      assets.some((a) => a.id === o.asset_id && a.has_audio),
-  );
-  $("addon-audio-row").hidden = !audioOverlays.length;
-  $("addon-audio-track").innerHTML = audioOverlays
-    .flatMap((o) => {
-      const a = assets.find((a) => a.id === o.asset_id);
-      return sourceRanges()
-        .filter(([start, end]) => start < o.end && end > o.start)
-        .map(([start, end]) => {
-          const left = Math.max(start, o.start),
-            right = Math.min(end, o.end);
-          return audioClip(
-            a,
-            left,
-            right,
-            o.asset_in + left - o.start,
-            `data-track-overlay="${o.id}"`,
-            a.name,
-          );
-        });
-    })
+      : "";
+  $("addon-audio-track").innerHTML = project.overlays
+    .filter(
+      (o) =>
+        o.enabled &&
+        o.audio &&
+        assets.some((a) => a.id === o.asset_id && a.has_audio),
+    )
+    .flatMap((o) =>
+      spans(o, false).map((s) => {
+        const a = assets.find((a) => a.id === o.asset_id);
+        return audioClip(
+          a,
+          s.start,
+          s.end,
+          o.asset_in + s.source - o.start,
+          `data-track-overlay="${o.id}"`,
+          a.name,
+        );
+      }),
+    )
     .join("");
+  for (const [row, track] of [
+    ["caption", "subtitle"],
+    ["overlay", "overlay"],
+    ["effect", "effect"],
+    ["music", "music"],
+    ["addon-audio", "addon-audio"],
+  ])
+    $(row + "-row").hidden = !$(track + "-track").childElementCount;
+  updateClipActions();
 }
+
 function renderJobs() {
   const running = Object.entries(project.jobs).find(
     ([, j]) => j.status === "running",
@@ -530,7 +581,7 @@ function renderJobs() {
     ? "The local speech model is not installed yet."
     : "";
   $("silence-settings").disabled = !!running;
-  $("prepare-button").disabled =
+  $("auto-edit").disabled = $("prepare-button").disabled =
     !!running ||
     !project.media.has_audio ||
     conflicted ||
@@ -539,11 +590,7 @@ function renderJobs() {
 function updateSummary() {
   if (!project) return;
   const saved = mergedCuts().reduce((sum, c) => sum + c.end - c.start, 0);
-  const count = project.cuts.filter((c) => c.enabled).length;
-  $("removed-duration").textContent = `${saved.toFixed(1)}s`;
-  $("cut-summary").textContent = count
-    ? `${count} section${count === 1 ? "" : "s"} cut · ${saved.toFixed(1)}s removed`
-    : "No cuts";
+
   $("edited-summary").textContent =
     `${time(duration() - saved, false)} edited · ${time(duration(), false)} original`;
   $("total-time").textContent = time(
@@ -551,11 +598,12 @@ function updateSummary() {
   );
   $("export-button").disabled = busy() || conflicted || dirty;
   $("plain-export-button").disabled = busy() || conflicted || dirty;
-  const libraryItem = document.querySelector(`[data-project="${project.id}"]`);
-  if (libraryItem) {
-    libraryItem.title = project.name;
-    libraryItem.querySelector("strong").textContent = project.name;
-  }
+  const empty = !clips().length;
+  video.style.visibility = empty ? "hidden" : "";
+  $("video-placeholder").hidden = project.media_ready && !empty;
+  if (empty) $("video-placeholder").textContent = "No clips";
+  $("export-button").disabled = busy() || conflicted || dirty || empty;
+  updateClipActions();
   renderExport();
 }
 function updateCaption() {
@@ -565,7 +613,7 @@ function updateCaption() {
     (c) => c.start <= t && t < c.end && c.text.trim(),
   );
   $("caption-overlay").textContent =
-    project.subtitle_style.enabled && mode === "edited"
+    project.subtitle_style.enabled && mode === "edited" && clips().length
       ? cues
           .map((c) =>
             project.subtitle_style.uppercase ? c.text.toUpperCase() : c.text,
@@ -573,7 +621,7 @@ function updateCaption() {
           .join("\n")
       : "";
   const stage = $("video-stage");
-  const ratio = project.media.width / project.media.height;
+  const ratio = 9 / 16;
   const actualHeight = Math.min(stage.clientHeight, stage.clientWidth / ratio);
   const actualWidth = Math.min(stage.clientWidth, stage.clientHeight * ratio);
   const inset =
@@ -609,10 +657,9 @@ function updateTime() {
     }
   }
   $("current-time").textContent = time(mode === "edited" ? outputTime(t) : t);
-  $("playhead").style.left = `${Math.min(100, (t / duration()) * 100)}%`;
-  $("cut-badge").hidden = !project.cuts.some(
-    (c) => c.enabled && t >= c.start && t < c.end,
-  );
+  $("playhead").style.left =
+    `${Math.min(100, (outputTime(t) / (duration() || 1)) * 100)}%`;
+  updateClipActions();
   updateCaption();
   production.updatePreview();
 }
@@ -636,7 +683,8 @@ function seek(t) {
   }
 }
 function togglePlay() {
-  if (!project?.media_ready) return;
+  if (!project?.media_ready || !clips().length) return;
+  if (mode !== "edited") setMode("edited");
   const player = tab === "review" ? $("review-video") : video;
   if (!player.currentSrc) return;
   if (player.paused) player.play().catch((e) => toast(e.message, true));
@@ -644,14 +692,21 @@ function togglePlay() {
 }
 function setTab(value) {
   tab = value;
+  $("inspector").hidden = !value;
+  $("editor").classList.toggle("panel-open", !!value);
   document
     .querySelector(".preview-column")
     .classList.toggle("reviewing", value === "review");
-  for (const name of ["cuts", "subtitles", "visuals", "review"]) {
+  for (const name of ["subtitles", "visuals", "review"]) {
     $(`${name}-tab`).classList.toggle("active", value === name);
-    $(`${name}-tab`).setAttribute("aria-selected", value === name);
+    $(`${name}-tab`).setAttribute("aria-selected", String(value === name));
     $(`${name}-panel`).hidden = value !== name;
   }
+  $("open-captions").setAttribute(
+    "aria-pressed",
+    String(value === "subtitles"),
+  );
+  $("open-media").setAttribute("aria-pressed", String(value === "visuals"));
   $("review-stage").hidden = value !== "review" || !project?.exports.length;
   if (value === "review") {
     video.pause();
@@ -660,10 +715,6 @@ function setTab(value) {
 }
 function setMode(value) {
   mode = value;
-  $("edited-mode").classList.toggle("active", value === "edited");
-  $("original-mode").classList.toggle("active", value === "original");
-  $("edited-mode").setAttribute("aria-pressed", String(value === "edited"));
-  $("original-mode").setAttribute("aria-pressed", String(value === "original"));
   updateSummary();
   updateTime();
   skipCut();
@@ -690,6 +741,7 @@ async function task(kind, plain = false) {
       burn_subtitles: !plain && project.subtitle_style.enabled,
       label: $("export-label").value,
       plain,
+      format: "vertical",
     };
   if (kind !== "export") pushUndo();
   ownJobs.add(kind);
@@ -752,15 +804,7 @@ function act(fn) {
   };
 }
 
-$("project-list").addEventListener(
-  "click",
-  act(async (e) => {
-    const button = e.target.closest("[data-project]");
-    if (button) await openProject(button.dataset.project);
-  }),
-);
-for (const id of ["import-button", "sidebar-import"])
-  $(id).onclick = () => $("video-input").click();
+$("import-button").onclick = () => $("video-input").click();
 $("dropzone").onclick = () => $("video-input").click();
 $("dropzone").onkeydown = (e) => {
   if (e.key === "Enter" || e.key === " ") $("video-input").click();
@@ -785,12 +829,15 @@ document.addEventListener(
     }
   }),
 );
-$("cuts-tab").onclick = () => setTab("cuts");
+
 $("visuals-tab").onclick = () => setTab("visuals");
 $("subtitles-tab").onclick = () => setTab("subtitles");
 $("review-tab").onclick = () => setTab("review");
-$("edited-mode").onclick = () => setMode("edited");
-$("original-mode").onclick = () => setMode("original");
+$("open-captions").onclick = () =>
+  setTab(tab === "subtitles" ? null : "subtitles");
+$("open-media").onclick = () => setTab(tab === "visuals" ? null : "visuals");
+$("close-inspector").onclick = () => setTab(null);
+$("auto-edit").onclick = act(() => task("prepare"));
 $("play-button").onclick = togglePlay;
 $("video-stage").onclick = togglePlay;
 $("back-button").onclick = () => seek(video.currentTime - 2);
@@ -818,7 +865,7 @@ function previewFrame() {
   }
   skipCut();
   $("playhead").style.left =
-    `${Math.min(100, (video.currentTime / duration()) * 100)}%`;
+    `${Math.min(100, (outputTime(video.currentTime) / (duration() || 1)) * 100)}%`;
   if (video.requestVideoFrameCallback)
     video.requestVideoFrameCallback(previewFrame);
   else requestAnimationFrame(previewFrame);
@@ -862,7 +909,7 @@ $("project-name").oninput = (e) => {
     changed();
   }
 };
-$("add-cut-button").onclick = applySelectedCut;
+
 $("add-caption-button").onclick = () => {
   if (!project || duration() < 0.04) return;
   pushUndo();
@@ -895,280 +942,285 @@ $("captions-enabled").onchange = () => {
   project.subtitle_style.enabled = $("captions-enabled").checked;
   changed();
 };
-for (const name of ["cuts-list", "subtitles-list"]) {
-  $(name).addEventListener("focusin", (e) => {
-    if (e.target.matches("input.time-input,textarea")) pushUndo();
-  });
-  $(name).addEventListener("input", (e) => {
-    const id = e.target.dataset.captionText;
-    if (id) {
-      const cue = project.subtitles.find((c) => c.id === id);
-      if (cue) {
-        cue.text = e.target.value;
-        changed();
-        renderTimeline();
-      }
-    }
-    const cutField = e.target.dataset.cutField,
-      subtitleField = e.target.dataset.subtitleField;
-    if (cutField || subtitleField) {
-      const field = cutField || subtitleField,
-        items = cutField ? project.cuts : project.subtitles;
-      const item = items.find((c) => c.id === e.target.dataset.id),
-        value = parseTime(e.target.value);
-      if (
-        item &&
-        Number.isFinite(value) &&
-        value >= 0 &&
-        value <= duration() &&
-        (field === "start" ? item.end - value : value - item.start) >= 0.02 &&
-        value !== item[field]
-      ) {
-        item[field] = value;
-        if (cutField) item.kind = "manual";
-        changed();
-        renderTimeline();
-        const row = e.target.closest(".cut-row,.subtitle-row");
-        const seekButton = row?.querySelector("[data-seek]");
-        if (seekButton) seekButton.dataset.seek = item.start;
-        if (cutField) {
-          row.querySelector("strong").textContent = "Cut";
-          row.querySelector("small").textContent =
-            `${(item.end - item.start).toFixed(2)}s`;
-        }
-      }
-    }
-  });
-  $(name).addEventListener("change", (e) => {
-    if (e.target.dataset.cutToggle) {
-      pushUndo();
-      const c = project.cuts.find((c) => c.id === e.target.dataset.cutToggle);
-      c.enabled = e.target.checked;
-      c.kind = "manual";
-      changed();
-      renderLists();
-      renderTimeline();
-      return;
-    }
-    const cutField = e.target.dataset.cutField,
-      subtitleField = e.target.dataset.subtitleField;
-    if (!cutField && !subtitleField) return;
-    const field = cutField || subtitleField,
-      items = cutField ? project.cuts : project.subtitles,
-      item = items.find((c) => c.id === e.target.dataset.id);
-    const value = parseTime(e.target.value);
-    if (
-      !Number.isFinite(value) ||
-      value < 0 ||
-      value > duration() ||
-      (field === "start" ? item.end - value : value - item.start) < 0.02
-    ) {
-      toast(
-        "Use a time inside the video, with the out point after the in point.",
-        true,
-      );
-      e.target.value = time(item[field]);
-      return;
-    }
-    item[field] = value;
-    if (cutField) item.kind = "manual";
+const captionEdits = new WeakSet();
+$("subtitles-list").addEventListener("focusin", (e) =>
+  captionEdits.delete(e.target),
+);
+$("subtitles-list").addEventListener("input", (e) => {
+  const textId = e.target.dataset.captionText,
+    field = e.target.dataset.subtitleField;
+  if (!textId && !field) return;
+  const item = project.subtitles.find(
+    (c) => c.id === (textId || e.target.dataset.id),
+  );
+  const value = textId ? e.target.value : parseTime(e.target.value);
+  if (
+    !item ||
+    (!textId &&
+      (!Number.isFinite(value) ||
+        value < 0 ||
+        value > duration() ||
+        (field === "start" ? item.end - value : value - item.start) < 0.02))
+  )
+    return;
+  const key = textId ? "text" : field;
+  if (item[key] === value) return;
+  if (!captionEdits.has(e.target)) {
+    pushUndo();
+    captionEdits.add(e.target);
+  }
+  item[key] = value;
+  changed();
+  renderTimeline();
+  const seekButton = e.target
+    .closest(".subtitle-row")
+    ?.querySelector("[data-seek]");
+  if (seekButton) seekButton.dataset.seek = item.start;
+});
+$("subtitles-list").addEventListener("change", (e) => {
+  const field = e.target.dataset.subtitleField;
+  if (!field) return;
+  const item = project.subtitles.find((c) => c.id === e.target.dataset.id),
+    value = parseTime(e.target.value);
+  if (
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > duration() ||
+    (field === "start" ? item.end - value : value - item.start) < 0.02
+  ) {
+    toast("Use a time inside the video, with the end after the start.", true);
+    e.target.value = time(item[field]);
+  }
+});
+$("subtitles-list").addEventListener("click", (e) => {
+  const button = e.target.closest("button");
+  if (!button) return;
+  if (button.dataset.seek) {
+    seek(Number(button.dataset.seek));
+    return;
+  }
+  if (button.dataset.removeSubtitle) {
+    pushUndo();
+    project.subtitles = project.subtitles.filter(
+      (c) => c.id !== button.dataset.removeSubtitle,
+    );
     changed();
     renderLists();
     renderTimeline();
-  });
-  $(name).addEventListener("click", (e) => {
-    const target = e.target.closest("button");
-    if (!target) return;
-    if (target.dataset.seek) {
-      seek(Number(target.dataset.seek));
-      return;
-    }
-    if (target.dataset.removeCut) {
-      pushUndo();
-      const cut = project.cuts.find((c) => c.id === target.dataset.removeCut);
-      cut.enabled = !cut.enabled;
-      cut.kind = "manual";
-      changed();
-      renderLists();
-      renderTimeline();
-    }
-    if (target.dataset.removeSubtitle) {
-      pushUndo();
-      project.subtitles = project.subtitles.filter(
-        (c) => c.id !== target.dataset.removeSubtitle,
-      );
-      changed();
-      renderLists();
-      renderTimeline();
-    }
-    if (target.dataset.cutSpeech) {
-      const cue = project.subtitles.find(
-        (c) => c.id === target.dataset.cutSpeech,
-      );
-      if (!cue) return;
-      pushUndo();
-      project.cuts.push({
-        id: uid(),
-        start: cue.start,
-        end: cue.end,
-        enabled: true,
-        kind: "manual",
-      });
-      changed();
-      renderLists();
-      renderTimeline();
-      toast("Speech range cut. Review both joins in the preview.");
-    }
-  });
-}
-function setRange(range) {
-  selectedRange = range;
-  const valid = range && range.end - range.start >= 0.02;
-  const marker = $("range-selection");
-  marker.hidden = !valid;
-  if (valid) {
-    marker.style.left = `${(range.start / duration()) * 100}%`;
-    marker.style.width = `${((range.end - range.start) / duration()) * 100}%`;
   }
-  $("range-label").textContent = valid
-    ? `${time(range.start)}–${time(range.end)} · ${(range.end - range.start).toFixed(2)}s`
-    : "Drag to select";
-  $("add-cut-button").disabled = !valid || busy() || conflicted;
+});
+
+function applyClips(next) {
+  project.cuts = cutsForClips(duration(), next, project.cuts, uid);
+  project.split_points = next.slice(0, -1).map((c) => c.end);
 }
-function applySelectedCut() {
-  if (
-    !project ||
-    !selectedRange ||
-    selectedRange.end - selectedRange.start < 0.02 ||
-    busy() ||
-    conflicted
-  )
-    return;
+function splitClip() {
+  if (!project || busy() || conflicted) return;
+  const all = clips(),
+    t = Math.round(video.currentTime * project.media.fps) / project.media.fps;
+  const index = all.findIndex((c) => t > c.start + 0.04 && t < c.end - 0.04);
+  if (index < 0) return;
   pushUndo();
-  const cut = { id: uid(), ...selectedRange, enabled: true, kind: "manual" };
-  project.cuts.push(cut);
-  selectedCut = cut.id;
-  setRange(null);
-  setTab("cuts");
-  setMode("edited");
-  const kept = sourceRanges();
-  const next = kept.find(([a]) => a >= cut.end);
-  if (next) seek(next[0] + 0.002);
-  else if (kept.length) seek(Math.max(kept.at(-1)[0], kept.at(-1)[1] - 0.04));
+  project.split_points = [...new Set([...project.split_points, t])].sort(
+    (a, b) => a - b,
+  );
+  selectedClip = index + 1;
   changed();
-  renderLists();
   renderTimeline();
 }
-function pointerTime(e) {
+function deleteClip() {
+  const all = clips();
+  if (selectedClip === null || !all[selectedClip] || busy() || conflicted)
+    return;
+  pushUndo();
+  video.pause();
+  const at = all[selectedClip].output;
+  applyClips(all.filter((_, i) => i !== selectedClip));
+  selectedClip = null;
+  changed();
+  renderTimeline();
+  seek(sourceAt(clips(), Math.min(at, editDuration())));
+}
+$("split-button").onclick = splitClip;
+$("delete-clip-button").onclick = deleteClip;
+$("restore-video").onclick = () => {
+  if (busy() || conflicted) return;
+  pushUndo();
+  project.cuts = [];
+  project.split_points = [];
+  selectedClip = null;
+  changed();
+  renderTimeline();
+  seek(0);
+};
+function timelineTime(e) {
   const rect = $("timeline").getBoundingClientRect();
-  return (
-    Math.round(
-      Math.max(
-        0,
-        Math.min(
-          duration(),
-          ((e.clientX - rect.left) / rect.width) * duration(),
-        ),
-      ) * 1000,
-    ) / 1000
+  return Math.max(
+    0,
+    Math.min(
+      editDuration(),
+      ((e.clientX - rect.left) / rect.width) * duration(),
+    ),
   );
 }
 $("timeline-grid").addEventListener("pointerdown", (e) => {
   if (!project || !e.target.closest(".timeline-lane")) return;
-  if (tab === "review") setTab("cuts");
   if (
     e.target.closest(
       "[data-track-overlay],[data-track-effect],[data-track-music],[data-cue]",
     )
-  ) {
-    setRange(null);
+  )
     return;
-  }
-  const edge = e.target.closest("[data-edge]");
-  if (edge) {
+  if (tab === "review") setTab(null);
+  const handle = e.target.closest("[data-trim]"),
+    item = e.target.closest("[data-clip],[data-select-clip]");
+  if (handle && !busy() && !conflicted) {
     e.preventDefault();
-    pushUndo();
-    selectedCut = edge.dataset.id;
-    dragging = { type: "edge", id: edge.dataset.id, edge: edge.dataset.edge };
+    video.pause();
+    selectedClip = Number(handle.closest("[data-clip]").dataset.clip);
+    lastTrimTarget = {
+      index: selectedClip,
+      edge: handle.dataset.trim,
+      at: performance.now(),
+    };
+    dragging = {
+      type: "trim",
+      edge: handle.dataset.trim,
+      index: selectedClip,
+      initial: clips(),
+      x: e.clientX,
+      scale: duration() / $("timeline").getBoundingClientRect().width,
+      changed: false,
+    };
     document.body.classList.add("dragging");
+    $("timeline-grid").setPointerCapture(e.pointerId);
   } else {
-    const region = e.target.closest("[data-region]");
-    if (region) {
-      selectedCut = region.dataset.region;
-      setTab("cuts");
-      renderLists();
-      renderTimeline();
-    }
-    const anchor = pointerTime(e);
-    dragging = { type: "range", anchor, x: e.clientX };
-    setRange(null);
-    seek(anchor);
+    lastTrimTarget = null;
+    selectedClip = item
+      ? Number(item.dataset.selectClip ?? item.dataset.clip)
+      : null;
+    seek(sourceAt(clips(), timelineTime(e)));
+    renderTimeline();
   }
-  $("timeline-grid").setPointerCapture(e.pointerId);
 });
 $("timeline-grid").addEventListener("pointermove", (e) => {
-  if (!dragging) return;
-  const t = pointerTime(e);
-  if (dragging.type === "range") {
-    if (Math.abs(e.clientX - dragging.x) < 4 && !selectedRange) return;
-    video.pause();
-    setRange({
-      start: Math.min(dragging.anchor, t),
-      end: Math.max(dragging.anchor, t),
-    });
-    seek(t);
+  if (dragging?.type !== "trim") return;
+  const delta =
+    Math.round((e.clientX - dragging.x) * dragging.scale * project.media.fps) /
+    project.media.fps;
+  const next = trimClip(
+    dragging.initial,
+    dragging.index,
+    dragging.edge,
+    delta,
+    duration(),
+  );
+  const a = next[dragging.index],
+    b = dragging.initial[dragging.index];
+  if (
+    !dragging.changed &&
+    Math.abs(a[dragging.edge] - b[dragging.edge]) < 0.001
+  )
     return;
+  if (!dragging.changed) {
+    pushUndo();
+    dragging.changed = true;
   }
-  const c = project.cuts.find((c) => c.id === dragging.id);
-  c.kind = "manual";
-  if (dragging.edge === "start")
-    c.start = Math.max(0, Math.min(c.end - 0.03, t));
-  else c.end = Math.min(duration(), Math.max(c.start + 0.03, t));
-  document.querySelectorAll(`[data-region="${c.id}"]`).forEach((region) => {
-    region.style.left = `${(c.start / duration()) * 100}%`;
-    region.style.width = `${((c.end - c.start) / duration()) * 100}%`;
-  });
+  applyClips(next);
+  renderTimeline();
   updateSummary();
+  seek(dragging.edge === "start" ? a.start : Math.max(a.start, a.end - 0.04));
 });
-function finishTimelineDrag(cancelled = false) {
+function finishTrim() {
   if (!dragging) return;
-  const edge = dragging.type === "edge";
+  const edited = dragging.changed;
   dragging = null;
   document.body.classList.remove("dragging");
-  if (edge) {
+  if (edited) {
     changed();
-    renderLists();
     renderTimeline();
-  } else if (
-    cancelled ||
-    !selectedRange ||
-    selectedRange.end - selectedRange.start < 0.02
-  )
-    setRange(null);
+  }
 }
-$("timeline-grid").addEventListener("pointerup", () => finishTimelineDrag());
-$("timeline-grid").addEventListener("pointercancel", () =>
-  finishTimelineDrag(true),
-);
-
-$("subtitle-track").onclick = (e) => {
-  if (!project) return;
-  const cue = e.target.closest("[data-cue]");
-  if (cue) {
-    const c = project.subtitles.find((c) => c.id === cue.dataset.cue);
-    setRange(null);
-    selectedSubtitle = c.id;
-    seek(c.start);
-    setTab("subtitles");
+for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
+  $("timeline-grid").addEventListener(event, finishTrim);
+$("timeline-grid").addEventListener("dblclick", (e) => {
+  const handle = e.target.closest("[data-trim]");
+  if (!handle && e.target !== $("timeline-grid")) return;
+  const target = handle
+    ? {
+        index: Number(handle.closest("[data-clip]").dataset.clip),
+        edge: handle.dataset.trim,
+        at: performance.now(),
+      }
+    : lastTrimTarget;
+  if (!target || performance.now() - target.at > 500 || busy() || conflicted)
+    return;
+  e.preventDefault();
+  pushUndo();
+  applyClips(
+    trimClip(
+      clips(),
+      target.index,
+      target.edge,
+      target.edge === "start" ? -duration() : duration(),
+      duration(),
+    ),
+  );
+  selectedClip = target.index;
+  lastTrimTarget = null;
+  changed();
+  renderTimeline();
+});
+$("timeline-grid").addEventListener("keydown", (e) => {
+  const handle = e.target.closest("[data-trim]");
+  if (
+    handle &&
+    ["ArrowLeft", "ArrowRight"].includes(e.key) &&
+    !busy() &&
+    !conflicted
+  ) {
+    e.preventDefault();
+    pushUndo();
+    const index = Number(handle.closest("[data-clip]").dataset.clip),
+      edge = handle.dataset.trim;
+    applyClips(
+      trimClip(
+        clips(),
+        index,
+        edge,
+        (e.key === "ArrowLeft" ? -1 : 1) *
+          (e.shiftKey ? 1 : 1 / project.media.fps),
+        duration(),
+      ),
+    );
+    selectedClip = index;
+    changed();
     renderTimeline();
     document
-      .querySelector(`[data-subtitle="${c.id}"]`)
-      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      .querySelector(`[data-clip="${index}"] [data-trim="${edge}"]`)
+      ?.focus();
   }
+  const item = e.target.closest("[data-select-clip]");
+  if (item && (e.key === "Enter" || e.key === " ")) {
+    e.preventDefault();
+    selectedClip = Number(item.dataset.selectClip);
+    seek(clips()[selectedClip].start);
+    renderTimeline();
+  }
+});
+$("subtitle-track").onclick = (e) => {
+  const cue = e.target.closest("[data-cue]");
+  if (!cue) return;
+  const c = project.subtitles.find((c) => c.id === cue.dataset.cue);
+  selectedSubtitle = c.id;
+  seek(c.start);
+  setTab("subtitles");
+  renderTimeline();
+  document
+    .querySelector(`[data-subtitle="${c.id}"]`)
+    ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 };
-
 $("timeline-grid").addEventListener("click", (e) => {
-  if (!project) return;
   const item = e.target.closest(
     "[data-track-overlay],[data-track-effect],[data-track-music]",
   );
@@ -1177,21 +1229,21 @@ $("timeline-grid").addEventListener("click", (e) => {
   if (item.dataset.trackMusic) {
     document.querySelector(".music-tools").open = true;
     $("music-asset").focus();
-  } else {
-    const key = item.dataset.trackOverlay ? "overlays" : "punches";
-    const id = item.dataset.trackOverlay || item.dataset.trackEffect;
-    const part = project[key].find((o) => o.id === id);
-    seek(part.start);
-    const selector =
-      key === "overlays" ? `[data-overlay="${id}"]` : `[data-punch="${id}"]`;
-    document
-      .querySelector(selector)
-      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    document
-      .querySelectorAll(".overlay-card.selected,.punch-card.selected")
-      .forEach((e) => e.classList.remove("selected"));
-    document.querySelector(selector)?.classList.add("selected");
+    return;
   }
+  const key = item.dataset.trackOverlay ? "overlays" : "punches",
+    id = item.dataset.trackOverlay || item.dataset.trackEffect;
+  const part = project[key].find((o) => o.id === id);
+  seek(part.start);
+  const selector =
+    key === "overlays" ? `[data-overlay="${id}"]` : `[data-punch="${id}"]`;
+  document
+    .querySelector(selector)
+    ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  document
+    .querySelectorAll(".overlay-card.selected,.punch-card.selected")
+    .forEach((e) => e.classList.remove("selected"));
+  document.querySelector(selector)?.classList.add("selected");
 });
 $("timeline-zoom").oninput = (e) => {
   $("timeline-grid").style.width = `${Number(e.target.value) * 100}%`;
@@ -1200,7 +1252,8 @@ $("timeline-zoom").oninput = (e) => {
   scroll.scrollLeft = Math.max(
     0,
     96 +
-      (video.currentTime / duration()) * $("timeline").clientWidth -
+      (outputTime(video.currentTime) / (duration() || 1)) *
+        $("timeline").clientWidth -
       scroll.clientWidth / 2,
   );
 };
@@ -1236,10 +1289,19 @@ document.addEventListener("keydown", (e) => {
     e.shiftKey ? redoEdit() : undoEdit();
     return;
   }
-  if (e.key === "Escape") setRange(null);
-  if ((e.key === "Backspace" || e.key === "Delete") && selectedRange) {
+  if (e.key === "Escape") {
+    selectedClip = null;
+    setTab(null);
+    renderTimeline();
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
     e.preventDefault();
-    applySelectedCut();
+    splitClip();
+    return;
+  }
+  if (e.key === "Backspace" || e.key === "Delete") {
+    e.preventDefault();
+    deleteClip();
     return;
   }
   if (
@@ -1275,19 +1337,15 @@ $("download-srt").onclick = act(async (e) => {
   }
 });
 $("reload-button").onclick = act(() => openProject(project.id, true));
-$("projects-toggle").onclick = () => {
-  const open = $("project-sidebar").classList.toggle("open");
-  $("projects-toggle").setAttribute("aria-expanded", String(open));
+$("help-button").onclick = () => {
+  document.querySelector(".more-menu").open = false;
+  $("help-dialog").showModal();
 };
-document.addEventListener("pointerdown", (e) => {
-  if (!e.target.closest("#project-sidebar,#projects-toggle")) {
-    $("project-sidebar").classList.remove("open");
-    $("projects-toggle").setAttribute("aria-expanded", "false");
-  }
-});
-$("help-button").onclick = () => $("help-dialog").showModal();
 $("close-help").onclick = () => $("help-dialog").close();
-$("project-settings-button").onclick = () => $("project-dialog").showModal();
+$("project-settings-button").onclick = () => {
+  document.querySelector(".more-menu").open = false;
+  $("project-dialog").showModal();
+};
 $("close-project").onclick = () => $("project-dialog").close();
 window.addEventListener("beforeunload", (e) => {
   if (dirty || savePromise) {
@@ -1379,6 +1437,7 @@ function renderReview() {
   $("review-downloads").innerHTML =
     `<a download href="${route + exported.file}">MP4 ↗</a><a download href="${route + exported.captions_file}">Captions ↗</a><a download href="${route + exported.manifest_file}">Edit details ↗</a>`;
   const notes = project.reviews.filter((n) => n.export_file === reviewFile);
+  $("review-notes").hidden = !notes.length;
   $("review-notes").innerHTML =
     notes
       .map((n) => {
@@ -1500,9 +1559,7 @@ async function poll() {
       if (was[kind]?.status === "running" && job.status === "done") {
         ownJobs.delete(kind);
         if (kind === "silence")
-          toast(
-            `Found ${p.cuts.filter((c) => c.kind === "silence").length} quiet sections. Review or adjust each cut.`,
-          );
+          toast("Pauses removed. Drag clip edges to adjust.");
         if (kind === "transcribe")
           toast(`${p.subtitles.length} subtitles ready to review.`);
         if (kind === "export") toast("Your export is ready to download.");
@@ -1522,6 +1579,14 @@ await act(async () => {
   await loadProjects();
   const id = new URLSearchParams(location.search).get("project");
   if (id) await openProject(id);
-  else if (projects.length) await openProject(projects[0].id);
+  else {
+    const active = localStorage.getItem("aiedit-active-project");
+    const current =
+      projects.find((p) => p.id === active) ||
+      projects.find((p) => p.media.height >= p.media.width) ||
+      projects[0];
+    if (current) await openProject(current.id);
+    else $("import-button").textContent = "Import video";
+  }
 })();
 setInterval(poll, 1300);

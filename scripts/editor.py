@@ -42,6 +42,7 @@ parser.add_argument("--padding", type=float, default=0.12)
 parser.add_argument("--language", default="auto")
 parser.add_argument("--no-subtitles", action="store_true")
 parser.add_argument("--label", default="")
+parser.add_argument("--format", choices=["source", "vertical"], default="source")
 parser.add_argument("--reusable", action="store_true")
 parser.add_argument("--note-id")
 parser.add_argument("--plain", action="store_true")
@@ -169,6 +170,7 @@ elif args.command not in ("health", "list"):
                 "burn_subtitles": not args.no_subtitles and not args.plain,
                 "label": args.label,
                 "plain": args.plain,
+                "format": args.format,
             },
         )
     elif args.command in ("review", "resolve"):

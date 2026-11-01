@@ -22,7 +22,15 @@ def mapped_spans(start, end, kept):
     return result
 
 
-def export_video(project, source, output_dir, burn_subtitles, assets=None, plain=False):
+def export_video(
+    project,
+    source,
+    output_dir,
+    burn_subtitles,
+    assets=None,
+    plain=False,
+    format="source",
+):
     from . import media
 
     assets = assets or {}
@@ -37,6 +45,10 @@ def export_video(project, source, output_dir, burn_subtitles, assets=None, plain
         project["media"]["width"] // 2 * 2,
         project["media"]["height"] // 2 * 2,
     )
+    if format == "vertical":
+        # Exact 9:16 dimensions, without upscaling small sources.
+        units = max(1, min(width // 18, height // 32, 60))
+        width, height = 18 * units, 32 * units
     total = sum(b - a for a, b in kept)
     filters, concat = [], []
     inputs = ["-i", str(source.resolve())]
@@ -56,7 +68,11 @@ def export_video(project, source, output_dir, burn_subtitles, assets=None, plain
         + f"concat=n={len(kept)}:v=1:a={int(audio)}[vcat]"
         + ("[voice]" if audio else "")
     )
-    filters.append(f"[vcat]scale={width}:{height},setsar=1[base]")
+    filters.append(
+        f"[vcat]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1[base]"
+        if format == "vertical"
+        else f"[vcat]scale={width}:{height},setsar=1[base]"
+    )
     current, count = "base", 0
     overlay_audio = []
     base_audio = "voice" if audio else None
@@ -108,9 +124,7 @@ def export_video(project, source, output_dir, burn_subtitles, assets=None, plain
                 y = (
                     0
                     if layout == "full"
-                    else int(height * 0.05)
-                    if layout == "top"
-                    else int(height * 0.48)
+                    else int(height * 0.05) if layout == "top" else int(height * 0.48)
                 )
                 length = span["end"] - span["start"]
                 if kind != "audio":
