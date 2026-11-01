@@ -2,7 +2,11 @@
 __pycache__/
 *.py[cod]
 .venv/
-.aiedit/
+/.aiedit/*
+!/.aiedit/README.md
+!/.aiedit/projects/
+/.aiedit/projects/*
+!/.aiedit/projects/.gitkeep
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
