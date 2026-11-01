@@ -32,6 +32,8 @@ class Overlay(Strict):
     end: float = Field(gt=0)
     asset_in: float = Field(default=0, ge=0)
     layout: Literal["top", "bottom", "full"] = "top"
+    x: float | None = Field(default=None, ge=0, le=1)
+    y: float | None = Field(default=None, ge=0, le=1)
     enabled: bool = True
     audio: bool = False
     volume: float = Field(default=0.4, ge=0, le=1)

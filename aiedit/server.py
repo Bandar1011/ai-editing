@@ -63,6 +63,8 @@ class Subtitle(BaseModel):
     start: float
     end: float
     text: str = Field(max_length=5000)
+    x: float | None = Field(default=None, ge=0, le=1)
+    y: float | None = Field(default=None, ge=0, le=1)
 
 
 class SubtitleStyle(BaseModel):

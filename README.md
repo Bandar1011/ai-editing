@@ -1,4 +1,4 @@
-# AI Editing
+# Reels Factory
 
 A local video workspace for Codex: transcribe one clip, shape the story, render a plain cut, then review each encoded version with its own captions and timecoded feedback.
 
@@ -21,7 +21,8 @@ Open **http://127.0.0.1:8775**. Import a video through the browser or give Codex
 - A project brief, original hook patterns, user-supplied performance history, and CTA planning.
 - A searchable local asset/mood library, deduplicated inbox import, and bounded yt-dlp media downloads.
 - Timed real screenshot/B-roll overlays, audio clips, optional punch-ins, and looping music with voice-priority ducking. Video-overlay audio is optional and has its own gain.
-- A single-video monochrome editor with a phone-sized 9:16 preview. Only populated tracks appear below video and original audio. Split, delete, and trim linked clips directly; extend an edge to recover footage, double-click to restore it, or undo. Captions and media controls open on demand.
+- A single-video monochrome editor with a phone-sized 9:16 preview. Only populated tracks appear below video and original audio. Split, delete, and trim linked clips directly; extend an edge to recover footage, double-click to restore it, or undo.
+- One collapsible tools panel contains Auto Edit, Media, and Captions. Select a caption or visual overlay on its timeline or directly in the preview, then drag it or use arrow keys to move it (Shift moves ten pixels). Positions persist, support undo/redo, and carry through to exports. Exported videos open in a separate dialog.
 - Same-laptop app screenshots/recordings through an owned Simulator lease and fingerprinted build reuse. Read the [capture requirements](docs/minimal-workflow.md#app-references-on-this-mac).
 - Plain and captioned H.264/AAC exports. Browser exports are 9:16 with a center crop, preserving frame rate. The API and CLI also support native aspect ratio. Captions are remapped to the edited timeline.
 - Each version keeps its own MP4, SRT, SHA-256 checksum, edit snapshot, source ranges, brief, and asset-source manifest. Later edits do not change earlier exports.
@@ -100,6 +101,8 @@ The top-level `footage/`, `references/`, `working/`, and `exports/` folders are 
 uv run --group dev pytest -q
 node --check web/app.js
 node --check web/production.js
+node --check web/canvas.mjs
+node --test tests/*.test.mjs
 ```
 
 Tests generate synthetic footage and exercise real FFmpeg decoding, cuts, burned captions, original preservation, range playback, revision conflicts, immutable export bundles, source transcripts, and feedback search. CI does not need personal footage, a speech-model download, an Xcode installation, or a native Simulator. Capture guard tests and mocks prove their own scope; actual native captures require the local host prerequisites.

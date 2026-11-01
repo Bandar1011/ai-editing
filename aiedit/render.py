@@ -126,6 +126,10 @@ def export_video(
                     if layout == "full"
                     else int(height * 0.05) if layout == "top" else int(height * 0.48)
                 )
+                if overlay.get("x") is not None:
+                    x = round(width * overlay["x"] - box_w / 2)
+                if overlay.get("y") is not None:
+                    y = round(height * overlay["y"] - box_h / 2)
                 length = span["end"] - span["start"]
                 if kind != "audio":
                     filters.append(
