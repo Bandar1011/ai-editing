@@ -1,6 +1,7 @@
 """Local media operations. No shell command interpolation or cloud processing."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -8,7 +9,8 @@ import uuid
 from fractions import Fraction
 from pathlib import Path
 
-from .timeline import ass_text, kept_ranges, parse_srt, remap_subtitles
+from .story import aligned_words, bound_words, short_captions
+from .timeline import kept_ranges, parse_srt
 
 
 def binary(name: str) -> str:
@@ -201,8 +203,8 @@ def transcribe(source: Path, directory: Path, model: Path, language: str) -> lis
         raise ValueError(
             "The local speech model is missing. Run: uv run python scripts/setup_model.py"
         )
-    wav = directory / "speech.wav"
-    prefix = directory / "speech"
+    directory.mkdir(parents=True, exist_ok=True)
+    wav, prefix = directory / "speech.wav", directory / "speech"
     run(
         [
             binary("ffmpeg"),
@@ -222,6 +224,23 @@ def transcribe(source: Path, directory: Path, model: Path, language: str) -> lis
             str(wav),
         ]
     )
+    # Flash attention disables DTW in whisper.cpp; explicitly disable it.
+    preset = os.environ.get("AIEDIT_DTW_MODEL")
+    if not preset:
+        model_name = model.stem.removeprefix("ggml-")
+        match = re.match(r"^(tiny|base|small|medium)(\.en)?", model_name)
+        large = re.match(r"^large[-.]v([123])([-\.]turbo)?", model_name)
+        preset = (
+            match.group()
+            if match
+            else ("large.v" + large[1] + (".turbo" if large[2] else ""))
+            if large
+            else None
+        )
+    if not preset:
+        raise ValueError(
+            "Set AIEDIT_DTW_MODEL to the matching whisper.cpp alignment preset for this custom model."
+        )
     run(
         [
             binary("whisper-cli"),
@@ -232,10 +251,11 @@ def transcribe(source: Path, directory: Path, model: Path, language: str) -> lis
             "-l",
             language,
             "-t",
-            "4",
-            "-ml",
-            "42",
-            "-sow",
+            "2",
+            "--dtw",
+            preset,
+            "-nfa",
+            "-ojf",
             "-osrt",
             "-of",
             str(prefix),
@@ -243,82 +263,76 @@ def transcribe(source: Path, directory: Path, model: Path, language: str) -> lis
         ],
         timeout=14400,
     )
-    return parse_srt(prefix.with_suffix(".srt").read_text(encoding="utf-8-sig"))
+    raw = json.loads(prefix.with_suffix(".json").read_text(encoding="utf-8"))
+    duration = probe(source)["duration"]
+    words = bound_words(aligned_words(raw), duration)
+    if not words:
+        raise ValueError(
+            "No speech was recognized. Check the audio before generating an edit."
+        )
+    transcript = {
+        "language": raw.get("result", {}).get("language", language),
+        "timing_method": "whisper.cpp DTW token alignment; word boundaries are alignment estimates",
+        "words": words,
+        "cues": [
+            dict(c, end=min(duration, c["end"]))
+            for c in parse_srt(
+                prefix.with_suffix(".srt").read_text(encoding="utf-8-sig")
+            )
+            if c["start"] < duration
+        ],
+    }
+    (directory / "word-transcript.json").write_text(
+        json.dumps(transcript, ensure_ascii=False, indent=2) + "\n"
+    )
+    return short_captions(words)
+
+
+def audio_quality(source: Path, start: float, end: float) -> dict:
+    import array
+
+    raw = subprocess.run(
+        [
+            binary("ffmpeg"),
+            "-v",
+            "error",
+            "-ss",
+            str(start),
+            "-t",
+            str(end - start),
+            "-i",
+            str(source),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-f",
+            "s16le",
+            "-",
+        ],
+        capture_output=True,
+        timeout=60,
+        check=True,
+    ).stdout
+    samples = array.array("h", raw)
+    if not samples:
+        return {"clipped_fraction": 0.0}
+    return {
+        "clipped_fraction": round(
+            sum(abs(s) >= 32700 for s in samples) / len(samples), 5
+        )
+    }
 
 
 def export_video(
-    project: dict, source: Path, output_dir: Path, burn_subtitles: bool
+    project: dict,
+    source: Path,
+    output_dir: Path,
+    burn_subtitles: bool,
+    assets=None,
+    plain=False,
 ) -> Path:
-    kept = kept_ranges(project["media"]["duration"], project["cuts"])
-    if not kept:
-        raise ValueError("There is no video left to export. Restore a cut first.")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output = output_dir / f"{uuid.uuid4().hex[:10]}.mp4"
-    audio = project["media"]["has_audio"]
-    filters, concat = [], []
-    for i, (start, end) in enumerate(kept):
-        filters.append(
-            f"[0:v:0]trim=start={start:.6f}:end={end:.6f},setpts=PTS-STARTPTS[v{i}]"
-        )
-        concat.append(f"[v{i}]")
-        if audio:
-            tail = max(0, end - start - 0.015)
-            filters.append(
-                f"[0:a:0]atrim=start={start:.6f}:end={end:.6f},asetpts=PTS-STARTPTS,afade=t=in:d=0.015,afade=t=out:st={tail:.6f}:d=0.015[a{i}]"
-            )
-            concat.append(f"[a{i}]")
-    filters.append(
-        "".join(concat)
-        + f"concat=n={len(kept)}:v=1:a={int(audio)}[vcat]"
-        + ("[aout]" if audio else "")
-    )
-    cues = remap_subtitles(project["subtitles"], kept)
-    vf = "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1"
-    if burn_subtitles and cues:
-        caption_path = output_dir / f"{output.stem}.ass"
-        caption_path.write_text(
-            ass_text(
-                cues,
-                project["media"]["width"],
-                project["media"]["height"],
-                project["subtitle_style"],
-            ),
-            encoding="utf-8",
-        )
-        vf += f",ass=filename={caption_path.name}"
-    filters.append(f"[vcat]{vf}[vout]")
-    command = [
-        binary("ffmpeg"),
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-n",
-        "-i",
-        str(source),
-        "-filter_complex_threads",
-        "2",
-        "-filter_complex",
-        ";".join(filters),
-        "-map",
-        "[vout]",
-    ]
-    if audio:
-        command += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
-    command += [
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
-        "-threads",
-        "2",
-        "-movflags",
-        "+faststart",
-        str(output),
-    ]
-    run(command, cwd=output_dir, timeout=14400)
-    probe(output)
-    return output
+    from .render import export_video as render
+
+    return render(project, source, output_dir, burn_subtitles, assets, plain)

@@ -21,7 +21,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import media
+from . import media, production, story
+from .assets import AssetLibrary
+from .hooks import HookLibrary
 from .timeline import (
     kept_ranges,
     parse_srt,
@@ -51,7 +53,7 @@ class Cut(BaseModel):
     start: float
     end: float
     enabled: bool = True
-    kind: Literal["silence", "manual"] = "manual"
+    kind: Literal["silence", "manual", "retake", "speech", "filler"] = "manual"
 
 
 class Subtitle(BaseModel):
@@ -67,6 +69,10 @@ class SubtitleStyle(BaseModel):
     font_size: int = Field(default=48, ge=24, le=80)
     position: Literal["top", "bottom"] = "bottom"
     enabled: bool = True
+    uppercase: bool = True
+    outline: float = Field(default=4, ge=0, le=8)
+    margin_percent: float = Field(default=18, ge=5, le=35)
+    max_words: int = Field(default=3, ge=1, le=3)
 
 
 class Brief(BaseModel):
@@ -92,6 +98,10 @@ class Edit(BaseModel):
     subtitle_style: SubtitleStyle
     brief: Brief
     references: list[Reference] = Field(max_length=200)
+    overlays: list[production.Overlay] | None = Field(default=None, max_length=100)
+    punches: list[production.Punch] | None = Field(default=None, max_length=30)
+    music: production.Music | None = None
+    story: production.StoryPlan | None = None
 
 
 class SilenceOptions(BaseModel):
@@ -107,6 +117,7 @@ class TranscribeOptions(BaseModel):
 class ExportOptions(BaseModel):
     burn_subtitles: bool = True
     label: str = Field(default="", max_length=120)
+    plain: bool = False
 
 
 class ReviewNote(BaseModel):
@@ -147,9 +158,21 @@ class Repository:
     def load(self, identifier: str) -> dict:
         with self.lock(identifier):
             try:
-                return json.loads(
+                project = json.loads(
                     (self.directory(identifier) / "project.json").read_text()
                 )
+                for key, value in {
+                    "overlays": [],
+                    "punches": [],
+                    "music": None,
+                    "retakes": [],
+                    "story": production.StoryPlan().model_dump(),
+                }.items():
+                    project.setdefault(key, value)
+                project["subtitle_style"] = dict(
+                    SubtitleStyle().model_dump(), **project["subtitle_style"]
+                )
+                return project
             except FileNotFoundError:
                 raise HTTPException(404, "Project not found.")
 
@@ -191,7 +214,9 @@ class Repository:
 class Editor:
     def __init__(self, directory: Path):
         self.repo = Repository(directory)
-        self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ai-editing")
+        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-editing")
+        self.library = AssetLibrary(directory / "library" / "assets")
+        self.hooks = HookLibrary(directory / "library")
         self.model = Path(
             os.environ.get("AIEDIT_MODEL", directory / "models" / "ggml-base.bin")
         )
@@ -246,7 +271,13 @@ class Editor:
         self.repo.change(
             identifier,
             lambda p: p["jobs"].update(
-                {kind: {"status": "running", "message": "Working…"}}
+                {
+                    kind: {
+                        "status": "running",
+                        "message": "Working…",
+                        "started_at": time.time(),
+                    }
+                }
             ),
         )
 
@@ -255,16 +286,16 @@ class Editor:
                 worker(identifier, *args)
                 self.repo.change(
                     identifier,
-                    lambda p: p["jobs"].update(
-                        {kind: {"status": "done", "message": "Complete"}}
+                    lambda p: p["jobs"][kind].update(
+                        status="done", message="Complete", finished_at=time.time()
                     ),
                 )
             except Exception as exc:
                 message = str(exc.detail if isinstance(exc, HTTPException) else exc)
                 self.repo.change(
                     identifier,
-                    lambda p: p["jobs"].update(
-                        {kind: {"status": "error", "message": message[-1800:]}}
+                    lambda p: p["jobs"][kind].update(
+                        status="error", message=message[-1800:], finished_at=time.time()
                     ),
                 )
             finally:
@@ -299,27 +330,10 @@ class Editor:
         )
 
         def update(project):
-            manual = [c for c in project["cuts"] if c["kind"] == "manual"]
-            automatic = []
-            for cut in cuts:
-                protected = [
-                    {
-                        "start": max(c["start"], cut["start"]) - cut["start"],
-                        "end": min(c["end"], cut["end"]) - cut["start"],
-                    }
-                    for c in manual
-                    if c["end"] > cut["start"] and c["start"] < cut["end"]
-                ]
-                for start, end in kept_ranges(cut["end"] - cut["start"], protected):
-                    automatic.append(
-                        dict(
-                            cut,
-                            id=uuid.uuid4().hex[:10],
-                            start=cut["start"] + start,
-                            end=cut["start"] + end,
-                        )
-                    )
-            project["cuts"] = manual + automatic
+            project["analysis_cuts"] = production.merge_automatic(cuts)
+            project["cuts"] = production.preserve_manual(
+                cuts + story.retake_cuts(project["retakes"]), project["cuts"]
+            )
             project["silence_options"] = options.model_dump()
 
         self.repo.change(identifier, update)
@@ -342,6 +356,12 @@ class Editor:
             "created_at": time.time(),
             "cues": cues,
         }
+        word_file = working / "word-transcript.json"
+        if word_file.is_file():
+            transcript.update(json.loads(word_file.read_text()))
+            cues = story.short_captions(
+                transcript["words"], max_words=p["subtitle_style"]["max_words"]
+            )
         (working / "transcript.json").write_text(
             json.dumps(transcript, ensure_ascii=False, indent=2) + "\n"
         )
@@ -351,23 +371,46 @@ class Editor:
                 raise ValueError(
                     "Captions changed during transcription. Your edits were preserved; the new transcript is saved in working/transcript.json."
                 )
-            project.update(subtitles=cues, transcript=transcript)
+            project.update(
+                subtitles=story.short_captions(
+                    transcript["words"],
+                    max_words=project["subtitle_style"]["max_words"],
+                )
+                if transcript.get("words")
+                else cues,
+                transcript=transcript,
+                captions_authored=False,
+            )
 
         self.repo.change(identifier, update)
 
     def export(
-        self, identifier: str, snapshot: dict, burn_subtitles: bool, label: str = ""
+        self,
+        identifier: str,
+        snapshot: dict,
+        burn_subtitles: bool,
+        label: str = "",
+        plain: bool = False,
+        resolved_assets=None,
     ):
+        resolved_assets = (
+            resolved_assets
+            if resolved_assets is not None
+            else (self.library.resolve(snapshot) if not plain else {})
+        )
         output = media.export_video(
             snapshot,
             self.source(snapshot),
             self.repo.directory(identifier) / "exports",
             burn_subtitles and snapshot["subtitle_style"]["enabled"],
+            resolved_assets,
+            plain,
         )
         kept = kept_ranges(snapshot["media"]["duration"], snapshot["cuts"])
         version = len(snapshot["exports"]) + 1
         captioned = (
             burn_subtitles
+            and not plain
             and snapshot["subtitle_style"]["enabled"]
             and bool(snapshot["subtitles"])
         )
@@ -386,7 +429,16 @@ class Editor:
             "story_duration": sum(b - a for a, b in kept),
             "encoded_media": encoded,
             "edit_state": {
-                key: snapshot[key] for key in ("cuts", "subtitles", "subtitle_style")
+                key: snapshot[key]
+                for key in (
+                    "cuts",
+                    "subtitles",
+                    "subtitle_style",
+                    "overlays",
+                    "punches",
+                    "music",
+                    "story",
+                )
             },
             "source_ranges": [{"start": a, "end": b} for a, b in kept],
             "brief": snapshot["brief"],
@@ -397,6 +449,11 @@ class Editor:
             "sha256": checksum,
             "captions_file": output.with_suffix(".srt").name,
             "manifest_file": output.with_suffix(".json").name,
+            "render_settings": {"plain": plain, "burn_subtitles": captioned},
+            "assets": [item["metadata"] for item in resolved_assets.values()]
+            if not plain
+            else [],
+            "retakes": snapshot.get("retakes", []),
         }
         output.with_suffix(".srt").write_text(
             srt_text(remap_subtitles(snapshot["subtitles"], kept)), encoding="utf-8"
@@ -431,6 +488,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     app = FastAPI(title="AI Editing", lifespan=lifespan)
     app.state.editor = editor
+    app.include_router(production.router(editor))
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 
     @app.middleware("http")
@@ -444,7 +502,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                     status_code=403,
                 )
         response = await call_next(request)
-        if request.url.path.startswith("/api/"):
+        if request.url.path.startswith(("/api/", "/static/")):
             response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
@@ -511,11 +569,16 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 raise HTTPException(
                     409, "This project changed elsewhere. Refresh before saving."
                 )
-            updates = edit.model_dump(exclude={"base_revision"})
+            updates = edit.model_dump(exclude={"base_revision"}, exclude_unset=True)
             for key in ("cuts", "subtitles"):
                 validate_intervals(updates[key], p["media"]["duration"])
                 if len({c["id"] for c in updates[key]}) != len(updates[key]):
                     raise ValueError("Each cut and subtitle needs its own unique ID.")
+            if updates["subtitles"] != p["subtitles"]:
+                story.split_existing_captions(updates["subtitles"])
+            production.validate_production(editor, updates, p["media"]["duration"])
+            if updates["subtitles"] != p["subtitles"]:
+                updates["captions_authored"] = True
             for reference in updates["references"]:
                 if reference["url"] and (
                     urlparse(reference["url"]).scheme not in {"https", "http"}
@@ -598,7 +661,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         if not cues:
             raise ValueError("No captions were found. Choose a UTF-8 SRT file.")
         validate_intervals(cues, p["media"]["duration"])
-        return editor.repo.change(identifier, lambda p: p.update(subtitles=cues))
+        story.split_existing_captions(cues)
+        return editor.repo.change(
+            identifier, lambda p: p.update(subtitles=cues, captions_authored=True)
+        )
 
     @app.get("/api/projects/{identifier}/subtitles.srt")
     def subtitles(identifier: str):
@@ -622,6 +688,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             p,
             options.burn_subtitles,
             options.label,
+            options.plain,
+            editor.library.resolve(p) if not options.plain else {},
         )
 
     @app.get("/api/projects/{identifier}/exports/{filename}")

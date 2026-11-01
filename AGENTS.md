@@ -10,4 +10,14 @@ Build and operate this local, transcript-first editing workspace. Start with one
 - Amplitude detects silence, not false starts or meaning. Review the transcript and listen to joins before claiming a story cut is good. Do not invent spoken words, screenshots, or asset provenance.
 - Use subprocess argument arrays, validate intervals and filenames, and scope media serving to project IDs. Preserve loopback-only access and same-origin writes.
 - Verify changes with `uv run --group dev pytest -q`, `node --check web/app.js`, and visible browser checks for UI changes. Tests use generated media; personal footage stays out of CI.
-- Do not publish finished videos or create paid/cloud integrations unless requested. Optional motion, matting, music, and asset tools should be added when a specific clip needs them.
+- Do not publish finished videos or create paid/cloud integrations unless requested. Keep the user's minimal style: 1–3 words per caption, speech-gap hard cuts, the better repeated take, real references, and restrained visual treatment.
+
+## Editing a reel from chat
+
+Follow `docs/minimal-workflow.md`. Prepare the clip through the API, read the raw transcript and word times, and review every retake group in context. Select the better delivery using actual audio/frames; preserve changed meaning and intentional repetition. Resolve uncertain candidates yourself from evidence when possible, without asking the user to choose every routine edit. Recognition confidence alone does not establish quality.
+
+Read relevant reusable feedback and hook performance before planning the opening/CTA. Hooks and CTA plans do not authorize invented speech. Ingest local assets, inspect their actual content, and label/search B-roll and music by subject, mood, purpose, source, and rights.
+
+For useful web references, use browser tools to capture the real page and store the exact URL. For an app demonstration, use a simulator on this laptop. Read the target repo's current instructions, respect its owned native lane/profile, and use the configured local capture helper. Select a screenshot for static information or a short recording for actions/animation. A specific screen needs an interactive leased session; a fresh launch capture alone does not demonstrate that screen. Preserve capture provenance and release the owned lease after related captures.
+
+Keep original media, captured app evidence, local paths, and machine-specific capture settings out of Git. App captures are source material; never imply that a Simulator proves real-device enforcement or purchases. Render a plain cut and a final candidate, check the exact encoded files, and preserve corrections with their versions.

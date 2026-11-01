@@ -1425,6 +1425,155 @@ body.dragging .timeline {
   }
 }
 /* Review and provenance share the same source-time editing workspace. */
+.reference-overlay {
+  position: absolute;
+  z-index: 2;
+  background: #101312;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px #0005;
+}
+.reference-overlay img,
+.reference-overlay video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+#video {
+  transition: transform 0.08s linear;
+}
+.caption-overlay {
+  z-index: 3;
+}
+.retakes,
+.download-tools {
+  margin: 18px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.retakes summary,
+.download-tools summary {
+  cursor: pointer;
+}
+.retake-card,
+.overlay-card,
+.asset-card {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 12px;
+  margin: 12px 0;
+  background: #1c231d;
+}
+.retake-card p,
+.asset-card p {
+  font-size: 11px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.retake-card small,
+.asset-card small {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin: 4px 0;
+}
+.retake-card > div {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.retake-card .chosen {
+  border-color: var(--lime);
+  color: var(--lime);
+}
+.asset-card .text-button {
+  margin-right: 15px;
+  color: var(--lime);
+}
+.production-form label,
+.overlay-card label {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 12px;
+}
+.production-form input,
+.production-form textarea,
+.overlay-card input,
+.overlay-card select,
+#asset-search,
+.download-tools input,
+.caption-style input[type="number"] {
+  width: 100%;
+  padding: 9px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #111612;
+  color: var(--ink);
+  font: 11px inherit;
+  line-height: 1.5;
+}
+.production-form textarea {
+  min-height: 62px;
+  resize: vertical;
+}
+.production-form .inline-label,
+.overlay-card .inline-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.production-form input[type="checkbox"],
+.overlay-card input[type="checkbox"] {
+  width: auto;
+}
+.production-form .button,
+.download-tools .button {
+  margin-top: 12px;
+}
+.row-heading,
+.punch-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+.row-heading strong {
+  overflow-wrap: anywhere;
+}
+.punch-row {
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+.hook-choice {
+  display: block;
+  text-align: left;
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #20271f;
+  font-size: 12px;
+}
+.hook-choice small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 6px;
+}
+.panel-tabs {
+  gap: 13px !important;
+}
+.panel-tabs button {
+  font-size: 10px !important;
+}
+.panel-tabs button span {
+  margin-left: 2px;
+}
 .preview-column.reviewing > .preview-card,
 .preview-column.reviewing > .timeline-card,
 .preview-column.reviewing > .under-preview {

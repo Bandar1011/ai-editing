@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,10 @@ from aiedit.media import binary
 
 def main():
     failed = False
+    print(
+        "Optional downloads: "
+        + (shutil.which("yt-dlp") or "install yt-dlp for linked media")
+    )
     for name in ("ffmpeg", "ffprobe", "whisper-cli"):
         try:
             path = binary(name)
@@ -23,6 +28,13 @@ def main():
             )
             if result.returncode:
                 raise RuntimeError((result.stderr or result.stdout)[-800:])
+            if name == "whisper-cli" and any(
+                flag not in result.stdout + result.stderr
+                for flag in ("--dtw", "-nfa", "--output-json-full")
+            ):
+                raise RuntimeError(
+                    "Update whisper.cpp: DTW, no-flash-attention, and full JSON output are required."
+                )
             print(f"OK {name}: {path}")
             if name == "ffmpeg":
                 filters = subprocess.run(

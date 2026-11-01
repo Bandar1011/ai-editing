@@ -156,9 +156,7 @@ def test_versions_preserve_captions_ranges_provenance_and_feedback(recording, tm
 
 
 def test_source_transcript_survives_caption_edits(recording, tmp_path, monkeypatch):
-    cues = [
-        {"id": "original", "start": 0.5, "end": 2, "text": "What was actually spoken"}
-    ]
+    cues = [{"id": "original", "start": 0.5, "end": 2, "text": "Words actually spoken"}]
     monkeypatch.setattr(media, "transcribe", lambda *args: copy.deepcopy(cues))
     with TestClient(
         create_app(tmp_path / "data"), base_url="http://127.0.0.1"
@@ -168,12 +166,12 @@ def test_source_transcript_survives_caption_edits(recording, tmp_path, monkeypat
         editor.transcribe(p["id"], "en")
         p = editor.repo.load(p["id"])
         body = edit_body(p)
-        body["subtitles"][0]["text"] = "A human caption correction"
+        body["subtitles"][0]["text"] = "Human caption correction"
         route = f"/api/projects/{p['id']}"
         assert client.put(route, json=body).status_code == 200
         assert client.get(route + "/transcript.json").json()["cues"] == cues
-        assert "What was actually spoken" in client.get(route + "/transcript.srt").text
-        assert "A human caption correction" in client.get(route + "/subtitles.srt").text
+        assert "Words actually spoken" in client.get(route + "/transcript.srt").text
+        assert "Human caption correction" in client.get(route + "/subtitles.srt").text
 
 
 def test_transcription_cannot_replace_concurrent_human_correction(

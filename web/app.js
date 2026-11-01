@@ -1,3 +1,4 @@
+import { createProduction } from "./production.js?v=minimal-1";
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s ?? "").replace(
@@ -30,6 +31,30 @@ let conflicted = false,
   toastTimer;
 let reviewFile = null;
 const ownJobs = new Set();
+const production = createProduction({
+  getProject: () => project,
+  applyProject: (p) => {
+    project = p;
+    savedEditable = editable(p);
+    renderProject();
+  },
+  api,
+  changed,
+  pushUndo,
+  saveNow: async () => {
+    await saveNow();
+    if (conflicted)
+      throw new Error("Load the latest project before continuing.");
+  },
+  toast,
+  time,
+  parseTime,
+  video,
+  outputTime,
+  isEdited: () => mode === "edited",
+  showOriginal: () => setMode("original"),
+  task,
+});
 
 function time(value, precise = true) {
   const n = Math.max(0, Number(value) || 0);
@@ -80,6 +105,10 @@ function editable(p = project) {
     subtitle_style: clone(p.subtitle_style),
     brief: clone(p.brief),
     references: clone(p.references),
+    overlays: clone(p.overlays),
+    punches: clone(p.punches),
+    music: clone(p.music),
+    story: clone(p.story),
   };
 }
 function busy() {
@@ -288,6 +317,7 @@ function renderProject() {
   updateTime();
   renderExport();
   renderReview();
+  production.render(project);
 }
 function renderExport() {
   const exported = project.exports.at(-1);
@@ -297,6 +327,10 @@ function renderExport() {
     cuts: project.cuts,
     subtitles: project.subtitles,
     subtitle_style: project.subtitle_style,
+    overlays: project.overlays,
+    punches: project.punches,
+    music: project.music,
+    story: project.story,
   };
   const matches =
     exported.edit_state &&
@@ -314,7 +348,7 @@ function renderLists() {
       .sort((a, b) => a.start - b.start)
       .map(
         (c, i) =>
-          `<div class="cut-row ${c.enabled ? "" : "disabled"} ${selectedCut === c.id ? "selected" : ""}" data-cut="${c.id}"><div class="cut-row-top"><input type="checkbox" aria-label="Enable cut ${i + 1}" data-cut-toggle="${c.id}" ${c.enabled ? "checked" : ""}><strong>${c.kind === "silence" ? "Quiet section" : "Manual cut"} ${i + 1}</strong><small>${(c.end - c.start).toFixed(2)}s</small><button class="remove-item" data-remove-cut="${c.id}" aria-label="Remove cut ${i + 1}">×</button></div><div class="times"><label>IN</label><input class="time-input" aria-label="Cut ${i + 1} start" value="${time(c.start)}" data-cut-field="start" data-id="${c.id}"><label>OUT</label><input class="time-input" aria-label="Cut ${i + 1} end" value="${time(c.end)}" data-cut-field="end" data-id="${c.id}"><button class="seek-item" data-seek="${c.start}" aria-label="Preview cut ${i + 1}">▷</button></div></div>`,
+          `<div class="cut-row ${c.enabled ? "" : "disabled"} ${selectedCut === c.id ? "selected" : ""}" data-cut="${c.id}"><div class="cut-row-top"><input type="checkbox" aria-label="Enable cut ${i + 1}" data-cut-toggle="${c.id}" ${c.enabled ? "checked" : ""}><strong>${{ silence: "Quiet section", speech: "Speech gap", retake: "Retake", filler: "Hesitation", manual: "Manual cut" }[c.kind] || "Cut"} ${i + 1}</strong><small>${(c.end - c.start).toFixed(2)}s</small><button class="remove-item" data-remove-cut="${c.id}" aria-label="Remove cut ${i + 1}">×</button></div><div class="times"><label>IN</label><input class="time-input" aria-label="Cut ${i + 1} start" value="${time(c.start)}" data-cut-field="start" data-id="${c.id}"><label>OUT</label><input class="time-input" aria-label="Cut ${i + 1} end" value="${time(c.end)}" data-cut-field="end" data-id="${c.id}"><button class="seek-item" data-seek="${c.start}" aria-label="Preview cut ${i + 1}">▷</button></div></div>`,
       )
       .join("") ||
     '<div class="empty-list"><span>◌</span>A little space is good.<br>Find pauses, then decide what stays.</div>';
@@ -347,14 +381,16 @@ function renderJobs() {
   const running = Object.entries(project.jobs).find(
     ([, j]) => j.status === "running",
   );
-  const error = Object.entries(project.jobs)
-    .reverse()
-    .find(([, j]) => j.status === "error");
+  const latest = Object.entries(project.jobs).sort(
+    (a, b) => (b[1].started_at || 0) - (a[1].started_at || 0),
+  )[0];
+  const error = latest?.[1].status === "error" ? latest : null;
   const names = {
     preview: "Preparing video & waveform…",
     silence: "Finding the quiet sections…",
     transcribe: "Transcribing on your Mac…",
     export: "Rendering your video…",
+    prepare: "Preparing captions, speech cuts, and retake decisions…",
   };
   $("job-status").hidden = !running && !error;
   $("job-status").classList.toggle("error", !running && !!error);
@@ -377,6 +413,11 @@ function renderJobs() {
     ? "The local speech model is not installed yet."
     : "";
   $("silence-settings").disabled = !!running;
+  $("prepare-button").disabled =
+    !!running ||
+    !project.media.has_audio ||
+    conflicted ||
+    !health.transcription_ready;
 }
 function updateSummary() {
   if (!project) return;
@@ -407,13 +448,22 @@ function updateCaption() {
     (c) => c.start <= t && t < c.end && c.text.trim(),
   );
   $("caption-overlay").textContent = project.subtitle_style.enabled
-    ? cues.map((c) => c.text).join("\n")
+    ? cues
+        .map((c) =>
+          project.subtitle_style.uppercase ? c.text.toUpperCase() : c.text,
+        )
+        .join("\n")
     : "";
   const stage = $("video-stage");
   const ratio = project.media.width / project.media.height;
   const actualHeight = Math.min(stage.clientHeight, stage.clientWidth / ratio);
   const actualWidth = Math.min(stage.clientWidth, stage.clientHeight * ratio);
-  const inset = (stage.clientHeight - actualHeight) / 2 + actualHeight * 0.065;
+  const inset =
+    (stage.clientHeight - actualHeight) / 2 +
+    (actualHeight * project.subtitle_style.margin_percent) / 100;
+  $("caption-overlay").style.webkitTextStroke =
+    `${(project.subtitle_style.outline * actualHeight) / 1080}px #101010`;
+  $("caption-overlay").style.paintOrder = "stroke fill";
   $("caption-overlay").style.fontSize =
     `${(project.subtitle_style.font_size * actualHeight) / 1080}px`;
   $("caption-overlay").style.maxWidth = `${actualWidth * 0.88}px`;
@@ -437,6 +487,7 @@ function updateTime() {
     (c) => c.enabled && t >= c.start && t < c.end,
   );
   updateCaption();
+  production.updatePreview();
 }
 function skipCut() {
   if (!project || mode !== "edited" || video.paused) return;
@@ -467,7 +518,7 @@ function setTab(value) {
   document
     .querySelector(".preview-column")
     .classList.toggle("reviewing", value === "review");
-  for (const name of ["cuts", "subtitles", "review"]) {
+  for (const name of ["cuts", "subtitles", "visuals", "review"]) {
     $(`${name}-tab`).classList.toggle("active", value === name);
     $(`${name}-tab`).setAttribute("aria-selected", value === name);
     $(`${name}-panel`).hidden = value !== name;
@@ -498,10 +549,16 @@ async function task(kind, plain = false) {
       padding: Number($("padding").value),
     };
   if (kind === "transcribe") body = { language: $("language").value };
+  if (kind === "prepare")
+    body = {
+      language: $("language").value,
+      max_words: project.subtitle_style.max_words,
+    };
   if (kind === "export")
     body = {
       burn_subtitles: !plain && project.subtitle_style.enabled,
       label: $("export-label").value,
+      plain,
     };
   if (kind !== "export") pushUndo();
   ownJobs.add(kind);
@@ -598,6 +655,7 @@ document.addEventListener(
   }),
 );
 $("cuts-tab").onclick = () => setTab("cuts");
+$("visuals-tab").onclick = () => setTab("visuals");
 $("subtitles-tab").onclick = () => setTab("subtitles");
 $("review-tab").onclick = () => setTab("review");
 $("edited-mode").onclick = () => setMode("edited");
@@ -643,7 +701,7 @@ video.addEventListener("pause", () => {
 });
 video.addEventListener("seeked", updateTime);
 video.addEventListener("loadedmetadata", updateTime);
-new ResizeObserver(updateCaption).observe($("video-stage"));
+new ResizeObserver(()=>{updateCaption();production.updatePreview();}).observe($("video-stage"));
 $("threshold").oninput = () =>
   ($("threshold-value").textContent = `${$("threshold").value} dB`);
 $("analyze-button").onclick = act(() => task("silence"));
