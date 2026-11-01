@@ -58,6 +58,8 @@ def export_video(project, source, output_dir, burn_subtitles, assets=None, plain
     )
     filters.append(f"[vcat]scale={width}:{height},setsar=1[base]")
     current, count = "base", 0
+    overlay_audio = []
+    base_audio = "voice" if audio else None
     if not plain:
         for punch in project.get("punches", []):
             if not punch.get("enabled", True) or punch["scale"] <= 1:
@@ -111,14 +113,34 @@ def export_video(project, source, output_dir, burn_subtitles, assets=None, plain
                     else int(height * 0.48)
                 )
                 length = span["end"] - span["start"]
-                filters.append(
-                    f"[{input_index}:v:0]trim=duration={length:.6f},setpts=PTS-STARTPTS+{span['start']:.6f}/TB,scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x101312,setsar=1[asset{count}]"
-                )
-                filters.append(
-                    f"[{current}][asset{count}]overlay=x={x}:y={y}:eof_action=pass:repeatlast=0:enable='gte(t,{span['start']:.6f})*lt(t,{span['end']:.6f})'[o{count}]"
-                )
-                current = f"o{count}"
+                if kind != "audio":
+                    filters.append(
+                        f"[{input_index}:v:0]trim=duration={length:.6f},setpts=PTS-STARTPTS+{span['start']:.6f}/TB,scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x101312,setsar=1[asset{count}]"
+                    )
+                    filters.append(
+                        f"[{current}][asset{count}]overlay=x={x}:y={y}:eof_action=pass:repeatlast=0:enable='gte(t,{span['start']:.6f})*lt(t,{span['end']:.6f})'[o{count}]"
+                    )
+                    current = f"o{count}"
+                if overlay.get("audio") and asset["metadata"]["has_audio"]:
+                    label = f"clipaudio{count}"
+                    tail = max(0, length - 0.012)
+                    filters.append(
+                        f"[{input_index}:a:0]atrim=duration={length:.6f},asetpts=PTS-STARTPTS,volume={overlay.get('volume', 0.4)},afade=t=in:d=0.012,afade=t=out:st={tail:.6f}:d=0.012,adelay={span['start'] * 1000:.3f}:all=1[{label}]"
+                    )
+                    overlay_audio.append(label)
                 input_index += 1
+        if overlay_audio:
+            labels = ([base_audio] if base_audio else []) + overlay_audio
+            mixing = (
+                f"amix=inputs={len(labels)}:duration=longest:normalize=0"
+                if len(labels) > 1
+                else "anull"
+            )
+            filters.append(
+                "".join(f"[{label}]" for label in labels)
+                + f"{mixing},apad,atrim=duration={total:.6f},alimiter=limit=0.95:latency=1[layered]"
+            )
+            base_audio = "layered"
         music = project.get("music")
         if music and music.get("enabled", True):
             asset = assets[music["asset_id"]]
@@ -127,24 +149,24 @@ def export_video(project, source, output_dir, burn_subtitles, assets=None, plain
             filters.append(
                 f"[{input_index}:a:0]atrim=start={offset}:duration={total:.6f},asetpts=PTS-STARTPTS,volume={music['volume']},afade=t=in:d=0.3,afade=t=out:st={max(0, total - 0.4):.6f}:d=0.4[music]"
             )
-            if audio:
+            if base_audio:
                 if music.get("duck", True):
                     filters.extend(
                         [
-                            "[voice]asplit=2[dry][control]",
+                            f"[{base_audio}]asplit=2[dry][control]",
                             "[music][control]sidechaincompress=threshold=0.025:ratio=8:attack=20:release=250[ducked]",
                             "[dry][ducked]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:latency=1[mixed]",
                         ]
                     )
                 else:
                     filters.append(
-                        "[voice][music]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:latency=1[mixed]"
+                        f"[{base_audio}][music]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:latency=1[mixed]"
                     )
             else:
                 filters.append("[music]anull[mixed]")
             audio_label = "mixed"
         else:
-            audio_label = "voice" if audio else None
+            audio_label = base_audio
     else:
         audio_label = "voice" if audio else None
     cues = remap_subtitles(project["subtitles"], kept)

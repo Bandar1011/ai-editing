@@ -11,6 +11,7 @@ Build and operate this local, transcript-first editing workspace. Start with one
 - Use subprocess argument arrays, validate intervals and filenames, and scope media serving to project IDs. Preserve loopback-only access and same-origin writes.
 - Verify changes with `uv run --group dev pytest -q`, `node --check web/app.js`, and visible browser checks for UI changes. Tests use generated media; personal footage stays out of CI.
 - Do not publish finished videos or create paid/cloud integrations unless requested. Keep the user's minimal style: 1–3 words per caption, speech-gap hard cuts, the better repeated take, real references, and restrained visual treatment.
+- Keep the editor monochrome and video-first. Use a phone-sized 9:16 preview for portrait clips and a landscape preview for wide clips. The bottom source timeline shows video, original audio, captions, visual overlays, effects, music, and timed added audio. Use direct action labels; omit decorative text, taglines, and explanatory subtitles under headings. Keep secondary settings collapsed and prioritize preview, tracks, cuts, captions, and import/export.
 
 ## Editing a reel from chat
 

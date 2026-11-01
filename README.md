@@ -20,7 +20,8 @@ Open **http://127.0.0.1:8775**. Import a video through the browser or give Codex
 - One-click first cuts combine speech-gap and quiet-interval cuts, isolated hesitation removal, and evidence-based retake selection. Ambiguous deliveries remain reviewable.
 - A project brief, original hook patterns, user-supplied performance history, and CTA planning.
 - A searchable local asset/mood library, deduplicated inbox import, and bounded yt-dlp media downloads.
-- Timed real screenshot/B-roll overlays, optional punch-ins, and looping music with voice-priority ducking.
+- Timed real screenshot/B-roll overlays, audio clips, optional punch-ins, and looping music with voice-priority ducking. Video-overlay audio is optional and has its own gain.
+- A monochrome editor with a phone-sized 9:16 portrait preview, native landscape previews, and labeled source tracks for video, original audio, captions, overlays, effects, music, and added audio. Drag to select a source range, cut it, restore it, or undo. Timeline clips open their controls; timeline zoom supports precise work on longer clips.
 - Same-laptop app screenshots/recordings through an owned Simulator lease and fingerprinted build reuse. Read the [capture requirements](docs/minimal-workflow.md#app-references-on-this-mac).
 - Plain and captioned H.264/AAC exports, preserving native aspect ratio and frame rate. Captions are remapped to the edited timeline.
 - Each version keeps its own MP4, SRT, SHA-256 checksum, edit snapshot, source ranges, brief, and asset-source manifest. Later edits do not change earlier exports.

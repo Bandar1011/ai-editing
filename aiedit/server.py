@@ -172,6 +172,9 @@ class Repository:
                 project["subtitle_style"] = dict(
                     SubtitleStyle().model_dump(), **project["subtitle_style"]
                 )
+                for overlay in project["overlays"]:
+                    overlay.setdefault("audio", False)
+                    overlay.setdefault("volume", 0.4)
                 return project
             except FileNotFoundError:
                 raise HTTPException(404, "Project not found.")
@@ -570,6 +573,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                     409, "This project changed elsewhere. Refresh before saving."
                 )
             updates = edit.model_dump(exclude={"base_revision"}, exclude_unset=True)
+            if edit.overlays is not None:
+                updates["overlays"] = [overlay.model_dump() for overlay in edit.overlays]
             for key in ("cuts", "subtitles"):
                 validate_intervals(updates[key], p["media"]["duration"])
                 if len({c["id"] for c in updates[key]}) != len(updates[key]):

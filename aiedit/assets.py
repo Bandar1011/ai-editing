@@ -114,6 +114,37 @@ class AssetLibrary:
         asset = self.get(asset_id)
         return self.directory(asset_id) / asset["file"]
 
+    def waveform(self, asset_id):
+        with self.lock:
+            asset = self.get(asset_id)
+            if not asset["has_audio"]:
+                raise ValueError("This asset has no audio.")
+            target = self.directory(asset_id) / "waveform.png"
+            if not target.exists():
+                temporary = target.with_name("waveform.tmp.png")
+                media.run(
+                    [
+                        media.binary("ffmpeg"),
+                        "-v",
+                        "error",
+                        "-y",
+                        "-i",
+                        str(self.path(asset_id)),
+                        "-filter_complex_threads",
+                        "1",
+                        "-filter_complex",
+                        "aformat=channel_layouts=mono,aresample=8000,showwavespic=s=1600x64:colors=0x555555",
+                        "-frames:v",
+                        "1",
+                        "-threads",
+                        "1",
+                        str(temporary),
+                    ],
+                    timeout=90,
+                )
+                temporary.replace(target)
+            return target
+
     def list(self, q="", kind=""):
         result = []
         for path in self.root.glob("*/asset.json"):

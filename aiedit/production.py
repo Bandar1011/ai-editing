@@ -33,6 +33,8 @@ class Overlay(Strict):
     asset_in: float = Field(default=0, ge=0)
     layout: Literal["top", "bottom", "full"] = "top"
     enabled: bool = True
+    audio: bool = False
+    volume: float = Field(default=0.4, ge=0, le=1)
     purpose: str = Field(default="", max_length=2000)
 
 
@@ -235,10 +237,12 @@ def validate_production(editor, updates, duration):
             raise ValueError("Each overlay and punch-in needs a unique ID.")
     for overlay in updates.get("overlays", []):
         asset = editor.library.get(overlay["asset_id"])
-        if asset["kind"] not in {"image", "video"}:
-            raise ValueError("Overlays need an image or video asset.")
+        if asset["kind"] not in {"image", "video", "audio"}:
+            raise ValueError("Choose an image, video, or audio clip.")
+        if overlay.get("audio") and not asset["has_audio"]:
+            raise ValueError("This clip has no audio.")
         if (
-            asset["kind"] == "video"
+            asset["kind"] in {"video", "audio"}
             and overlay["asset_in"] + overlay["end"] - overlay["start"]
             > asset["duration"] + 0.05
         ):
@@ -418,6 +422,10 @@ def router(editor):
     @api.get("/api/assets/{asset_id}/media")
     def asset_file(asset_id: str):
         return FileResponse(editor.library.path(asset_id))
+
+    @api.get("/api/assets/{asset_id}/waveform")
+    def asset_waveform(asset_id: str):
+        return FileResponse(editor.library.waveform(asset_id))
 
     @api.post("/api/projects/{identifier}/prepare")
     def prepare_project(identifier: str, options: PrepareOptions):
