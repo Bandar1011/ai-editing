@@ -25,6 +25,7 @@ Open **http://127.0.0.1:8775**. Import a video through the browser or give Codex
 - One collapsible tools panel contains Auto Edit, Media, and Captions. Select a caption or visual overlay on its timeline or directly in the preview, then drag it or use arrow keys to move it (Shift moves ten pixels). Positions persist, support undo/redo, and carry through to exports. Exported videos open in a separate dialog.
 - Same-laptop app screenshots/recordings through an owned Simulator lease and fingerprinted build reuse. Read the [capture requirements](docs/minimal-workflow.md#app-references-on-this-mac).
 - Plain and captioned H.264/AAC exports. Browser exports are 9:16 with a center crop, preserving frame rate. The API and CLI also support native aspect ratio. Captions are remapped to the edited timeline.
+- HDR camera footage is converted to BT.709 SDR for browser previews and exports before captions or overlays are composited. Uploaded originals keep their original HDR data.
 - Each version keeps its own MP4, SRT, SHA-256 checksum, edit snapshot, source ranges, brief, and asset-source manifest. Later edits do not change earlier exports.
 - Encoded-version playback and timecoded notes recording the requested change and reason. Link a correction to a later export. Search feedback across projects; one-edit notes and reusable preferences are distinct.
 - Agent CLI, local job status, recovery after interrupted jobs, and protection against overwriting concurrent browser edits.

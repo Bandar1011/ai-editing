@@ -86,7 +86,26 @@ def probe(source: Path) -> dict:
     }
 
 
+def sdr_filter(source: Path) -> str:
+    """Convert HDR camera footage before adding SDR captions or references."""
+    raw = json.loads(run([
+        binary("ffprobe"), "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=color_transfer", "-of", "json", str(source),
+    ], timeout=30))
+    transfer = raw["streams"][0].get("color_transfer")
+    if transfer not in ("arib-std-b67", "smpte2084"):
+        return ""
+    peak = 10 if transfer == "arib-std-b67" else 0
+    return (
+        "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
+        f"tonemap=tonemap=hable:desat=0:peak={peak},"
+        "zscale=t=bt709:m=bt709:r=tv,format=yuv420p,sidedata=mode=delete"
+    )
+
+
 def make_proxy(source: Path, directory: Path, audio: bool) -> None:
+    tone = sdr_filter(source)
+    scaling = "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2"
     run(
         [
             binary("ffmpeg"),
@@ -101,7 +120,7 @@ def make_proxy(source: Path, directory: Path, audio: bool) -> None:
             "-map",
             "0:a:0?",
             "-vf",
-            "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2",
+            scaling + ("," + tone if tone else ""),
             "-c:v",
             "libx264",
             "-preset",
