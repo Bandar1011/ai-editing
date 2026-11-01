@@ -749,3 +749,77 @@ def test_addon_audio_is_timed_through_cuts_and_can_be_muted(recording, tmp_path,
         body["overlays"] = copy.deepcopy(p["overlays"])
         body["overlays"][0].update(start=0, end=4.5)
         assert client.put(route, json=body).status_code == 400
+
+
+def test_free_layer_positions_persist_and_match_encoded_pixels(tmp_path):
+    source = tmp_path / "black.mp4"
+    media.run([
+        media.binary("ffmpeg"), "-v", "error", "-y", "-f", "lavfi", "-i",
+        "color=black:s=180x320:r=30:d=3", "-c:v", "libx264", "-preset",
+        "ultrafast", str(source),
+    ])
+    images = []
+    for color in ("red", "blue"):
+        image = tmp_path / (color + ".png")
+        media.run([
+            media.binary("ffmpeg"), "-v", "error", "-y", "-f", "lavfi", "-i",
+            f"color={color}:s=32x32", "-frames:v", "1", "-threads", "1", str(image),
+        ])
+        images.append(image)
+    with TestClient(create_app(tmp_path / "data"), base_url="http://127.0.0.1") as client:
+        editor = client.app.state.editor
+        p = wait_for(editor, editor.create(source, source.name)["id"])
+        assets = [editor.library.import_file(image) for image in images]
+        body = edit_body(p)
+        body.update(
+            subtitles=[{
+                "id": "caption", "start": 1.5, "end": 2.8,
+                "text": "Move me", "x": 0.7, "y": 0.55,
+            }],
+            subtitle_style=dict(p["subtitle_style"], font_size=64),
+            overlays=[
+                {
+                    "id": color, "asset_id": asset["id"], "start": 0, "end": 1.4,
+                    "x": position, "y": position,
+                }
+                for color, asset, position in zip(("red", "blue"), assets, (0.25, 0.75))
+            ],
+        )
+        route = f"/api/projects/{p['id']}"
+        saved = client.put(route, json=body)
+        assert saved.status_code == 200, saved.text
+        p = saved.json()
+        assert client.get(route).json()["subtitles"][0]["x"] == 0.7
+        assert p["overlays"][1]["y"] == 0.75
+        assert client.post(route + "/export", json={"format": "vertical"}).status_code == 200
+        p = wait_for(editor, p["id"])
+        out = editor.repo.directory(p["id"]) / "exports" / p["exports"][-1]["file"]
+        def frame(at):
+            return subprocess.run(
+                [media.binary("ffmpeg"), "-v", "error", "-ss", str(at), "-i", str(out),
+                 "-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
+                capture_output=True, check=True,
+            ).stdout
+
+        raw = frame(0.5)
+
+        def pixel(x, y):
+            offset = (y * 180 + x) * 3
+            return raw[offset:offset + 3]
+
+        assert pixel(45, 80)[0] > 200 and pixel(45, 80)[2] < 50
+        assert pixel(135, 240)[2] > 200 and pixel(135, 240)[0] < 50
+        raw = frame(2)
+        white = [
+            (i // 3 % 180, i // 3 // 180)
+            for i in range(0, len(raw), 3) if min(raw[i:i + 3]) > 210
+        ]
+        assert white
+
+        def centre(axis):
+            return (min(v[axis] for v in white) + max(v[axis] for v in white)) / 2
+
+        assert abs(centre(0) - 126) < 5 and abs(centre(1) - 176) < 8
+        body = edit_body(p)
+        body["subtitles"][0]["x"] = 1.1
+        assert client.put(route, json=body).status_code == 422

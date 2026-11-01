@@ -1,4 +1,4 @@
-# AI Editing
+# Reels Factory
 
 Build and operate this local, transcript-first editing workspace. Start with one clip, a source-timestamped transcript, and a plain story cut. Add captions and purposeful visuals after reviewing the story. The resource brief is summarized in `docs/workflow.md`.
 
@@ -9,9 +9,10 @@ Build and operate this local, transcript-first editing workspace. Start with one
 - An export is an immutable review candidate with a complete edit snapshot and its own captions. Feedback must identify the exact export, timeline position, change, and reason. A one-edit note is not a reusable preference.
 - Amplitude detects silence, not false starts or meaning. Review the transcript and listen to joins before claiming a story cut is good. Do not invent spoken words, screenshots, or asset provenance.
 - Use subprocess argument arrays, validate intervals and filenames, and scope media serving to project IDs. Preserve loopback-only access and same-origin writes.
-- Verify changes with `uv run --group dev pytest -q`, `node --check web/app.js`, `node --test tests/timeline_editor.test.mjs`, and visible browser checks for UI changes. Tests use generated media; personal footage stays out of CI.
+- Verify changes with `uv run --group dev pytest -q`, `node --check web/app.js`, `node --test tests/*.test.mjs`, and visible browser checks for UI changes. Tests use generated media; personal footage stays out of CI.
 - Do not publish finished videos or create paid/cloud integrations unless requested. Keep the user's minimal style: 1–3 words per caption, speech-gap hard cuts, the better repeated take, real references, and restrained visual treatment.
 - Keep the editor monochrome, minimal, and focused on one 9:16 vertical video. Do not show a project/demo picker, a Cuts inspector, or an Edited/Original switch. Start with video and original audio; show one additional row per type only while captions, overlays, effects, music, or added audio actually exist. Extra controls open on demand. The joined timeline uses Split and Delete with linked video/audio clips; draggable edges recover trimmed source footage, double-click restores an edge, and Restore full video and undo remain available. Browser exports are vertical, preserving frame rate. Keep direct action labels and omit decorative copy.
+- The header shows Reels Factory without a project-name field or Project settings. Auto Edit, Media, and Captions belong inside one collapsible right panel; a left arrow reopens it. Timeline and preview layer selections stay linked. User-added captions and visual overlays can be dragged in the preview; store their centres as normalized x/y coordinates and preserve them in exports. Keep Export separate from the tools tabs.
 
 ## Editing a reel from chat
 

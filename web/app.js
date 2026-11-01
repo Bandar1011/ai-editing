@@ -1,3 +1,4 @@
+import { createCanvas } from "./canvas.mjs?v=factory-3";
 import {
   keptRanges,
   clipsFor,
@@ -5,8 +6,9 @@ import {
   cutsForClips,
   trimClip,
   mappedSpans,
-} from "./timeline.mjs?v=simple-5";
-import { createProduction } from "./production.js?v=simple-5";
+  lanesFor,
+} from "./timeline.mjs?v=factory-3";
+import { createProduction } from "./production.js?v=factory-3";
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s ?? "").replace(
@@ -22,7 +24,7 @@ const video = $("video");
 let project = null,
   projects = [],
   health = {},
-  tab = null,
+  tab = "auto",
   mode = "edited";
 let selectedClip = null,
   selectedSubtitle = null,
@@ -41,6 +43,9 @@ let reviewFile = null;
 let timelineFrame = null;
 let activeCaptionIds = new Set();
 let lastTrimTarget = null;
+let lastTab = "auto",
+  selectedLayer = null,
+  canvas;
 const ownJobs = new Set();
 const production = createProduction({
   getProject: () => project,
@@ -68,6 +73,26 @@ const production = createProduction({
     if (project) renderTimeline();
   },
   task,
+  selectLayer,
+  onPreviewUpdate: () => canvas?.refresh(),
+});
+canvas = createCanvas({
+  stage: $("video-stage"),
+  getSelection: () => selectedLayer,
+  getItem: layerItem,
+  select: selectLayer,
+  pushUndo,
+  changed: () => {
+    changed();
+    renderLists();
+    updateCaption();
+    production.render(project);
+  },
+  refreshPreview: () => {
+    updateCaption();
+    production.updatePreview();
+  },
+  blocked: () => busy() || conflicted,
 });
 
 function time(value, precise = true) {
@@ -263,7 +288,8 @@ async function openProject(id, discard = false) {
   undo = [];
   redo = [];
   selectedClip = selectedSubtitle = null;
-  setTab(null);
+  selectedLayer = null;
+  setTab("auto");
   savedEditable = editable(p);
   $("conflict-banner").hidden = true;
   history.replaceState(null, "", `?project=${p.id}`);
@@ -280,12 +306,7 @@ function renderProject() {
   if (!project) return;
   $("empty-state").hidden = true;
   $("editor").hidden = false;
-  $("project-name").value = project.name;
-  $("project-name").disabled = false;
-  $("project-settings-button").disabled = false;
   $("editor").style.setProperty("--preview-ratio", 9 / 16);
-  $("project-details").innerHTML =
-    `${project.media.width} × ${project.media.height} <span class="muted">/</span> ${Math.round(project.media.fps * 100) / 100} fps<br>${esc(project.filename)}`;
   const address = `/api/projects/${project.id}/media`;
   if (project.media_ready && video.dataset.project !== project.id) {
     video.src = address;
@@ -313,9 +334,6 @@ function renderProject() {
   $("source-transcript").href = `/api/projects/${project.id}/transcript.srt`;
   $("source-json").href = `/api/projects/${project.id}/transcript.json`;
   $("transcript-downloads").hidden = !project.transcript;
-  for (const key of ["goal", "target", "rights"])
-    $(`brief-${key}`).value = project.brief[key];
-  renderReferences();
   const available = clips();
   if (
     mode === "edited" &&
@@ -376,7 +394,7 @@ function renderLists() {
       .sort((a, b) => a.start - b.start)
       .map(
         (c, i) =>
-          `<div class="subtitle-row" data-subtitle="${c.id}"><div class="times"><button class="seek-item" data-seek="${c.start}" aria-label="Preview subtitle ${i + 1}">▷</button><input class="time-input" aria-label="Subtitle ${i + 1} start" data-subtitle-field="start" data-id="${c.id}" value="${time(c.start)}"><span class="muted">→</span><input class="time-input" aria-label="Subtitle ${i + 1} end" data-subtitle-field="end" data-id="${c.id}" value="${time(c.end)}"><button class="remove-item" data-remove-subtitle="${c.id}" aria-label="Remove subtitle ${i + 1}">×</button></div><textarea dir="auto" aria-label="Subtitle ${i + 1} text" placeholder="Type a subtitle…" maxlength="5000" data-caption-text="${c.id}">${esc(c.text)}</textarea></div>`,
+          `<div class="subtitle-row" data-subtitle="${c.id}"><div class="times"><button class="seek-item" data-seek="${c.start}" aria-label="Preview subtitle ${i + 1}">▷</button><input class="time-input" aria-label="Subtitle ${i + 1} start" data-subtitle-field="start" data-id="${c.id}" value="${time(c.start)}"><span class="muted">→</span><input class="time-input" aria-label="Subtitle ${i + 1} end" data-subtitle-field="end" data-id="${c.id}" value="${time(c.end)}"><button class="remove-item" data-remove-subtitle="${c.id}" aria-label="Remove subtitle ${i + 1}">×</button></div><textarea dir="auto" aria-label="Subtitle ${i + 1} text" placeholder="Type a subtitle…" maxlength="5000" data-caption-text="${c.id}">${esc(c.text)}</textarea>${c.x != null && c.y != null ? `<button class="text-button" data-reset-caption="${c.id}">Reset position</button>` : ""}</div>`,
       )
       .join("") || '<div class="empty-list">No captions</div>';
 }
@@ -406,7 +424,9 @@ function updateClipActions() {
     conflicted ||
     !all.some((c) => t > c.start + 0.04 && t < c.end - 0.04);
   $("delete-clip-button").disabled =
-    selectedClip === null || !all[selectedClip] || busy() || conflicted;
+    ((selectedClip === null || !all[selectedClip]) && !layerItem()) ||
+    busy() ||
+    conflicted;
   $("restore-video").disabled = busy() || conflicted;
   $("restore-video").hidden =
     !project?.cuts.some((c) => c.enabled) && !project?.split_points?.length;
@@ -542,6 +562,25 @@ function renderTimeline() {
     ["addon-audio", "addon-audio"],
   ])
     $(row + "-row").hidden = !$(track + "-track").childElementCount;
+  for (const [row, track] of [
+    ["caption", "subtitle"],
+    ["overlay", "overlay"],
+    ["effect", "effect"],
+    ["addon-audio", "addon-audio"],
+  ]) {
+    const lane = $(track + "-track"),
+      nodes = [...lane.children];
+    const lanes = lanesFor(
+      nodes.map((el) => ({
+        start: parseFloat(el.style.left),
+        end: parseFloat(el.style.left) + parseFloat(el.style.width),
+      })),
+    );
+    nodes.forEach((el, i) => (el.style.top = `${lanes[i] * 26 + 2}px`));
+    const height = Math.max(26, (Math.max(-1, ...lanes) + 1) * 26);
+    lane.style.height = height + "px";
+    $(row + "-row").style.height = height + 2 + "px";
+  }
   updateClipActions();
 }
 
@@ -581,7 +620,7 @@ function renderJobs() {
     ? "The local speech model is not installed yet."
     : "";
   $("silence-settings").disabled = !!running;
-  $("auto-edit").disabled = $("prepare-button").disabled =
+  $("prepare-button").disabled =
     !!running ||
     !project.media.has_audio ||
     conflicted ||
@@ -591,8 +630,6 @@ function updateSummary() {
   if (!project) return;
   const saved = mergedCuts().reduce((sum, c) => sum + c.end - c.start, 0);
 
-  $("edited-summary").textContent =
-    `${time(duration() - saved, false)} edited · ${time(duration(), false)} original`;
   $("total-time").textContent = time(
     mode === "edited" ? duration() - saved : duration(),
   );
@@ -608,46 +645,124 @@ function updateSummary() {
 }
 function updateCaption() {
   if (!project) return;
-  const t = video.currentTime || 0;
-  const cues = project.subtitles.filter(
-    (c) => c.start <= t && t < c.end && c.text.trim(),
-  );
-  $("caption-overlay").textContent =
-    project.subtitle_style.enabled && mode === "edited" && clips().length
-      ? cues
-          .map((c) =>
-            project.subtitle_style.uppercase ? c.text.toUpperCase() : c.text,
-          )
-          .join("\n")
-      : "";
-  const stage = $("video-stage");
-  const ratio = 9 / 16;
-  const actualHeight = Math.min(stage.clientHeight, stage.clientWidth / ratio);
-  const actualWidth = Math.min(stage.clientWidth, stage.clientHeight * ratio);
-  const inset =
-    (stage.clientHeight - actualHeight) / 2 +
-    (actualHeight * project.subtitle_style.margin_percent) / 100;
-  $("caption-overlay").style.webkitTextStroke =
-    `${(project.subtitle_style.outline * actualHeight) / 1080}px #101010`;
-  $("caption-overlay").style.paintOrder = "stroke fill";
-  $("caption-overlay").style.fontSize =
-    `${(project.subtitle_style.font_size * actualHeight) / 1080}px`;
-  $("caption-overlay").style.maxWidth = `${actualWidth * 0.88}px`;
-  $("caption-overlay").style.top =
-    project.subtitle_style.position === "top" ? `${inset}px` : "auto";
-  $("caption-overlay").style.bottom =
-    project.subtitle_style.position === "bottom" ? `${inset}px` : "auto";
-  const currentIds = new Set(cues.map((c) => c.id));
-  for (const id of new Set([...activeCaptionIds, ...currentIds]))
+  const t = video.currentTime || 0,
+    style = project.subtitle_style;
+  const cues =
+    style.enabled && mode === "edited" && clips().length
+      ? project.subtitles.filter(
+          (c) => c.start <= t && t < c.end && c.text.trim(),
+        )
+      : [];
+  const holder = $("caption-overlay"),
+    stage = $("video-stage"),
+    active = new Set(cues.map((c) => c.id));
+  for (const node of [...holder.children])
+    if (!active.has(node.dataset.canvasCaption)) node.remove();
+  for (const cue of cues) {
+    let node = holder.querySelector(`[data-canvas-caption="${cue.id}"]`);
+    if (!node) {
+      node = document.createElement("div");
+      node.className = "canvas-caption";
+      node.dataset.canvasCaption = cue.id;
+      node.setAttribute("role", "button");
+      node.tabIndex = 0;
+      holder.append(node);
+    }
+    const text = style.uppercase ? cue.text.toUpperCase() : cue.text;
+    if (node.textContent !== text) node.textContent = text;
+    node.setAttribute("aria-label", `Caption: ${cue.text}`);
+    node.style.webkitTextStroke = `${(style.outline * stage.clientHeight) / 1080}px #101010`;
+    node.style.fontSize = `${(style.font_size * stage.clientHeight) / 1080}px`;
+    if (cue.x != null && cue.y != null) {
+      node.style.left = `${cue.x * 100}%`;
+      node.style.top = `${cue.y * 100}%`;
+      node.style.bottom = "auto";
+      node.style.transform = "translate(-50%,-50%)";
+    } else {
+      node.style.left = "50%";
+      node.style.transform = "translateX(-50%)";
+      node.style.top =
+        style.position === "top" ? `${style.margin_percent}%` : "auto";
+      node.style.bottom =
+        style.position === "bottom" ? `${style.margin_percent}%` : "auto";
+    }
+  }
+  for (const id of new Set([...activeCaptionIds, ...active]))
     document
       .querySelector(`[data-subtitle="${id}"]`)
-      ?.classList.toggle("active", currentIds.has(id));
-  activeCaptionIds = currentIds;
+      ?.classList.toggle("active", active.has(id));
+  activeCaptionIds = active;
+  canvas?.refresh();
 }
+function layerItem(selection = selectedLayer) {
+  if (!project || !selection) return null;
+  return (
+    selection.kind === "caption"
+      ? project.subtitles
+      : selection.kind === "overlay"
+        ? project.overlays
+        : selection.kind === "effect"
+          ? project.punches
+          : []
+  ).find((item) => item.id === selection.id);
+}
+function selectLayer(selection, { seekTo = false } = {}) {
+  selectedLayer = selection;
+  selectedSubtitle = selection?.kind === "caption" ? selection.id : null;
+  if (!selection || selection.kind !== "video") selectedClip = null;
+  const item = layerItem(selection);
+  if (seekTo && item) {
+    if (mode !== "edited") setMode("edited");
+    video.pause();
+    const span = mappedSpans(item.start, item.end, clips())[0];
+    if (span) seek(span.source + Math.min(0.002, (span.end - span.start) / 2));
+  }
+  if (selection && selection.kind !== "video") {
+    lastTab = selection.kind === "caption" ? "subtitles" : "visuals";
+    if (tab) setTab(lastTab);
+  }
+  renderTimeline();
+  document
+    .querySelectorAll("[data-overlay],[data-punch],[data-subtitle]")
+    .forEach((el) =>
+      el.classList.toggle(
+        "selected",
+        !!selection &&
+          [el.dataset.overlay, el.dataset.punch, el.dataset.subtitle].includes(
+            selection.id,
+          ),
+      ),
+    );
+  canvas?.refresh();
+}
+function deleteSelection() {
+  const item = layerItem();
+  if (!item || selectedLayer?.kind === "video") {
+    deleteClip();
+    return;
+  }
+  if (busy() || conflicted) return;
+  pushUndo();
+  const key =
+    selectedLayer.kind === "caption"
+      ? "subtitles"
+      : selectedLayer.kind === "overlay"
+        ? "overlays"
+        : "punches";
+  project[key] = project[key].filter((o) => o.id !== item.id);
+  selectedLayer = null;
+  selectedSubtitle = null;
+  changed();
+  renderLists();
+  production.render(project);
+  renderTimeline();
+  canvas?.refresh();
+}
+
 function updateTime() {
   if (!project) return;
   let t = video.currentTime || 0;
-  if (tab === "review") {
+  if ($("export-dialog").open) {
     const version = project.exports.find((e) => e.file === reviewFile);
     let remaining = $("review-video").currentTime || 0;
     for (const range of version?.source_ranges || []) {
@@ -685,34 +800,37 @@ function seek(t) {
 function togglePlay() {
   if (!project?.media_ready || !clips().length) return;
   if (mode !== "edited") setMode("edited");
-  const player = tab === "review" ? $("review-video") : video;
+  const player = $("export-dialog").open ? $("review-video") : video;
   if (!player.currentSrc) return;
   if (player.paused) player.play().catch((e) => toast(e.message, true));
   else player.pause();
 }
 function setTab(value) {
+  if (value) lastTab = value;
   tab = value;
   $("inspector").hidden = !value;
   $("editor").classList.toggle("panel-open", !!value);
-  document
-    .querySelector(".preview-column")
-    .classList.toggle("reviewing", value === "review");
-  for (const name of ["subtitles", "visuals", "review"]) {
+  $("open-inspector").hidden = !!value;
+  $("open-inspector").setAttribute("aria-expanded", String(!!value));
+  for (const name of ["auto", "visuals", "subtitles"]) {
     $(`${name}-tab`).classList.toggle("active", value === name);
     $(`${name}-tab`).setAttribute("aria-selected", String(value === name));
     $(`${name}-panel`).hidden = value !== name;
   }
-  $("open-captions").setAttribute(
-    "aria-pressed",
-    String(value === "subtitles"),
-  );
-  $("open-media").setAttribute("aria-pressed", String(value === "visuals"));
-  $("review-stage").hidden = value !== "review" || !project?.exports.length;
-  if (value === "review") {
-    video.pause();
-    renderReview();
-  } else $("review-video").pause();
+  canvas?.refresh();
 }
+function openExport() {
+  if (!project?.exports.length) return;
+  video.pause();
+  renderReview();
+  if (!$("export-dialog").open) $("export-dialog").showModal();
+}
+$("close-export").onclick = () => $("export-dialog").close();
+$("export-dialog").addEventListener("close", () => {
+  $("review-video").pause();
+  updateTime();
+});
+
 function setMode(value) {
   mode = value;
   updateSummary();
@@ -832,14 +950,11 @@ document.addEventListener(
 
 $("visuals-tab").onclick = () => setTab("visuals");
 $("subtitles-tab").onclick = () => setTab("subtitles");
-$("review-tab").onclick = () => setTab("review");
-$("open-captions").onclick = () =>
-  setTab(tab === "subtitles" ? null : "subtitles");
-$("open-media").onclick = () => setTab(tab === "visuals" ? null : "visuals");
+$("auto-tab").onclick = () => setTab("auto");
+$("open-inspector").onclick = () => setTab(lastTab);
 $("close-inspector").onclick = () => setTab(null);
-$("auto-edit").onclick = act(() => task("prepare"));
 $("play-button").onclick = togglePlay;
-$("video-stage").onclick = togglePlay;
+
 $("back-button").onclick = () => seek(video.currentTime - 2);
 $("forward-button").onclick = () => seek(video.currentTime + 2);
 $("mute-button").onclick = () => {
@@ -900,16 +1015,6 @@ $("analyze-button").onclick = act(() => task("silence"));
 $("transcribe-button").onclick = act(() => task("transcribe"));
 $("export-button").onclick = act(() => task("export"));
 $("plain-export-button").onclick = act(() => task("export", true));
-$("project-name").onfocus = () => {
-  if (project) pushUndo();
-};
-$("project-name").oninput = (e) => {
-  if (project && e.target.value.trim()) {
-    project.name = e.target.value;
-    changed();
-  }
-};
-
 $("add-caption-button").onclick = () => {
   if (!project || duration() < 0.04) return;
   pushUndo();
@@ -935,7 +1040,12 @@ $("font-size").oninput = () => {
 $("caption-position").onchange = () => {
   pushUndo();
   project.subtitle_style.position = $("caption-position").value;
+  for (const cue of project.subtitles) {
+    delete cue.x;
+    delete cue.y;
+  }
   changed();
+  renderLists();
 };
 $("captions-enabled").onchange = () => {
   pushUndo();
@@ -1042,7 +1152,7 @@ function deleteClip() {
   seek(sourceAt(clips(), Math.min(at, editDuration())));
 }
 $("split-button").onclick = splitClip;
-$("delete-clip-button").onclick = deleteClip;
+$("delete-clip-button").onclick = deleteSelection;
 $("restore-video").onclick = () => {
   if (busy() || conflicted) return;
   pushUndo();
@@ -1071,7 +1181,7 @@ $("timeline-grid").addEventListener("pointerdown", (e) => {
     )
   )
     return;
-  if (tab === "review") setTab(null);
+  if ($("export-dialog").open) $("export-dialog").close();
   const handle = e.target.closest("[data-trim]"),
     item = e.target.closest("[data-clip],[data-select-clip]");
   if (handle && !busy() && !conflicted) {
@@ -1096,11 +1206,14 @@ $("timeline-grid").addEventListener("pointerdown", (e) => {
     $("timeline-grid").setPointerCapture(e.pointerId);
   } else {
     lastTrimTarget = null;
+    selectedLayer = { kind: "video" };
+    selectedSubtitle = null;
     selectedClip = item
       ? Number(item.dataset.selectClip ?? item.dataset.clip)
       : null;
     seek(sourceAt(clips(), timelineTime(e)));
     renderTimeline();
+    canvas?.refresh();
   }
 });
 $("timeline-grid").addEventListener("pointermove", (e) => {
@@ -1204,20 +1317,19 @@ $("timeline-grid").addEventListener("keydown", (e) => {
   if (item && (e.key === "Enter" || e.key === " ")) {
     e.preventDefault();
     selectedClip = Number(item.dataset.selectClip);
+    selectedLayer = { kind: "video" };
+    selectedSubtitle = null;
     seek(clips()[selectedClip].start);
     renderTimeline();
+    canvas?.refresh();
   }
 });
 $("subtitle-track").onclick = (e) => {
   const cue = e.target.closest("[data-cue]");
   if (!cue) return;
-  const c = project.subtitles.find((c) => c.id === cue.dataset.cue);
-  selectedSubtitle = c.id;
-  seek(c.start);
-  setTab("subtitles");
-  renderTimeline();
+  selectLayer({ kind: "caption", id: cue.dataset.cue }, { seekTo: true });
   document
-    .querySelector(`[data-subtitle="${c.id}"]`)
+    .querySelector(`[data-subtitle="${cue.dataset.cue}"]`)
     ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 };
 $("timeline-grid").addEventListener("click", (e) => {
@@ -1225,7 +1337,7 @@ $("timeline-grid").addEventListener("click", (e) => {
     "[data-track-overlay],[data-track-effect],[data-track-music]",
   );
   if (!item) return;
-  setTab("visuals");
+  if (tab) setTab("visuals");
   if (item.dataset.trackMusic) {
     document.querySelector(".music-tools").open = true;
     $("music-asset").focus();
@@ -1234,7 +1346,10 @@ $("timeline-grid").addEventListener("click", (e) => {
   const key = item.dataset.trackOverlay ? "overlays" : "punches",
     id = item.dataset.trackOverlay || item.dataset.trackEffect;
   const part = project[key].find((o) => o.id === id);
-  seek(part.start);
+  selectLayer(
+    { kind: key === "overlays" ? "overlay" : "effect", id },
+    { seekTo: true },
+  );
   const selector =
     key === "overlays" ? `[data-overlay="${id}"]` : `[data-punch="${id}"]`;
   document
@@ -1281,7 +1396,7 @@ document.addEventListener("keydown", (e) => {
   if (
     e.target.closest("input,textarea,select,[contenteditable=true]") ||
     $("help-dialog").open ||
-    $("project-dialog").open
+    $("export-dialog").open
   )
     return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
@@ -1291,7 +1406,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     selectedClip = null;
-    setTab(null);
+    selectLayer(null);
     renderTimeline();
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
@@ -1301,8 +1416,23 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Backspace" || e.key === "Delete") {
     e.preventDefault();
-    deleteClip();
+    deleteSelection();
     return;
+  }
+  if (
+    selectedLayer &&
+    ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)
+  ) {
+    const step = e.shiftKey ? 10 : 1;
+    if (
+      canvas.moveBy(
+        e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0,
+        e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0,
+      )
+    ) {
+      e.preventDefault();
+      return;
+    }
   }
   if (
     e.code === "Space" &&
@@ -1337,68 +1467,16 @@ $("download-srt").onclick = act(async (e) => {
   }
 });
 $("reload-button").onclick = act(() => openProject(project.id, true));
-$("help-button").onclick = () => {
-  document.querySelector(".more-menu").open = false;
-  $("help-dialog").showModal();
-};
+$("help-button").onclick = () => $("help-dialog").showModal();
 $("close-help").onclick = () => $("help-dialog").close();
-$("project-settings-button").onclick = () => {
-  document.querySelector(".more-menu").open = false;
-  $("project-dialog").showModal();
-};
-$("close-project").onclick = () => $("project-dialog").close();
 window.addEventListener("beforeunload", (e) => {
-  if (dirty || savePromise) {
+  if (dirty || savePromise || canvas?.dragging) {
     e.preventDefault();
     e.returnValue = "";
   }
 });
 
-function renderReferences() {
-  $("reference-list").innerHTML = project.references
-    .map(
-      (r, i) =>
-        `<div class="reference-row" data-reference="${i}"><input data-reference-field="title" value="${esc(r.title)}" maxlength="200" aria-label="Source ${i + 1} title" placeholder="Source title"><input data-reference-field="url" value="${esc(r.url)}" maxlength="2000" aria-label="Source ${i + 1} URL" placeholder="https://…"><textarea data-reference-field="purpose" maxlength="2000" aria-label="Source ${i + 1} purpose" placeholder="What this source contributes">${esc(r.purpose)}</textarea><button data-remove-reference="${i}" class="text-button">Remove source</button></div>`,
-    )
-    .join("");
-}
-for (const key of ["goal", "target", "rights"]) {
-  $(`brief-${key}`).onfocus = pushUndo;
-  $(`brief-${key}`).oninput = (e) => {
-    project.brief[key] = e.target.value;
-    changed();
-  };
-}
-$("add-reference").onclick = () => {
-  if (!project) return;
-  pushUndo();
-  project.references.push({ title: "Untitled source", url: "", purpose: "" });
-  changed();
-  renderReferences();
-};
-$("reference-list").onfocusin = (e) => {
-  if (e.target.matches("input,textarea")) pushUndo();
-};
-$("reference-list").oninput = (e) => {
-  const row = e.target.closest("[data-reference]"),
-    field = e.target.dataset.referenceField;
-  if (row && field) {
-    project.references[Number(row.dataset.reference)][field] = e.target.value;
-    changed();
-  }
-};
-$("reference-list").onclick = (e) => {
-  const button = e.target.closest("[data-remove-reference]");
-  if (!button) return;
-  pushUndo();
-  project.references.splice(Number(button.dataset.removeReference), 1);
-  changed();
-  renderReferences();
-};
 function renderReview() {
-  document
-    .querySelector(".preview-column")
-    .classList.toggle("reviewing", tab === "review");
   const versions = project.exports;
   if (!versions.some((e) => e.file === reviewFile))
     reviewFile = versions.at(-1)?.file || null;
@@ -1417,7 +1495,7 @@ function renderReview() {
   $("review-version").hidden = !exported;
   $("no-exports").hidden = !!exported;
   $("review-form").hidden = !exported;
-  $("review-stage").hidden = tab !== "review" || !exported;
+  $("review-stage").hidden = !exported;
   if (!exported) {
     $("review-notes").innerHTML = "";
     return;
@@ -1527,7 +1605,15 @@ $("history-form").onsubmit = act(async (e) => {
 });
 
 async function poll() {
-  if (pollRunning || !project || dirty || savePromise || dragging || conflicted)
+  if (
+    pollRunning ||
+    !project ||
+    dirty ||
+    savePromise ||
+    dragging ||
+    canvas?.dragging ||
+    conflicted
+  )
     return;
   pollRunning = true;
   try {
@@ -1554,7 +1640,7 @@ async function poll() {
     project = p;
     savedEditable = editable(p);
     renderProject();
-    if (finishedExport) setTab("review");
+    if (finishedExport) openExport();
     for (const [kind, job] of Object.entries(p.jobs)) {
       if (was[kind]?.status === "running" && job.status === "done") {
         ownJobs.delete(kind);

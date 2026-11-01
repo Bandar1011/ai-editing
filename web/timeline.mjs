@@ -99,3 +99,17 @@ export function mappedSpans(start, end, clips) {
       : [];
   });
 }
+
+export function lanesFor(items) {
+  const ends = [],
+    lanes = [];
+  for (const { item, index } of items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => a.item.start - b.item.start)) {
+    let lane = ends.findIndex((end) => end <= item.start + 0.000001);
+    if (lane < 0) lane = ends.length;
+    ends[lane] = item.end;
+    lanes[index] = lane;
+  }
+  return lanes;
+}

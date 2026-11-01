@@ -1,3 +1,4 @@
+import { overlayBox } from "./canvas.mjs?v=factory-3";
 export function createProduction({
   getProject,
   applyProject,
@@ -14,6 +15,8 @@ export function createProduction({
   showOriginal,
   refreshTimeline,
   task,
+  selectLayer,
+  onPreviewUpdate,
 }) {
   const $ = (id) => document.getElementById(id);
   const esc = (s) =>
@@ -102,8 +105,6 @@ export function createProduction({
     $("caption-margin").value = p.subtitle_style.margin_percent;
     $("caption-outline").value = p.subtitle_style.outline;
     $("caption-max-words").value = p.subtitle_style.max_words;
-    for (const key of ["topic", "hook", "hook_reason", "cta", "app_bundle_id"])
-      $(`story-${key}`).value = p.story[key] || "";
     $("music-asset").value = p.music?.asset_id || "";
     $("music-volume").value = p.music?.volume ?? 0.12;
     $("music-duck").checked = p.music?.duck ?? true;
@@ -121,7 +122,7 @@ export function createProduction({
       .map((o) => {
         const a = library.find((a) => a.id === o.asset_id),
           audioOnly = a?.kind === "audio";
-        return `<article class="overlay-card" data-overlay="${o.id}"><div class="row-heading"><strong>${esc(a?.name || "Overlay")}</strong><button class="text-button" data-remove-overlay="${o.id}">Remove</button></div><div class="two-settings"><label>Source start<input data-overlay-field="start" value="${time(o.start)}" aria-label="Overlay start"></label><label>Source end<input data-overlay-field="end" value="${time(o.end)}" aria-label="Overlay end"></label></div>${a?.kind !== "image" ? `<label>Clip offset (seconds)<input type="number" min="0" step="0.1" data-overlay-field="asset_in" value="${o.asset_in}"></label>` : ""}${!audioOnly ? `<label>Position<select data-overlay-field="layout"><option value="top" ${o.layout === "top" ? "selected" : ""}>Top</option><option value="bottom" ${o.layout === "bottom" ? "selected" : ""}>Bottom</option><option value="full" ${o.layout === "full" ? "selected" : ""}>Full frame</option></select></label>` : ""}${a?.has_audio && !audioOnly ? `<label class="inline-label">Play clip audio<input type="checkbox" data-overlay-field="audio" ${o.audio ? "checked" : ""}></label>` : ""}${a?.has_audio && (o.audio || audioOnly) ? `<label>Audio volume<input type="range" min="0" max="1" step="0.01" data-overlay-field="volume" value="${o.volume ?? 0.4}"></label>` : ""}<label class="inline-label">${audioOnly ? "Enable audio" : "Show overlay"}<input type="checkbox" data-overlay-field="enabled" ${o.enabled ? "checked" : ""}></label></article>`;
+        return `<article class="overlay-card" data-overlay="${o.id}"><div class="row-heading"><strong>${esc(a?.name || "Overlay")}</strong><button class="text-button" data-remove-overlay="${o.id}">Remove</button></div><div class="two-settings"><label>Source start<input data-overlay-field="start" value="${time(o.start)}" aria-label="Overlay start"></label><label>Source end<input data-overlay-field="end" value="${time(o.end)}" aria-label="Overlay end"></label></div>${a?.kind !== "image" ? `<label>Clip offset (seconds)<input type="number" min="0" step="0.1" data-overlay-field="asset_in" value="${o.asset_in}"></label>` : ""}${!audioOnly && (o.x != null || o.y != null) ? `<button class="text-button" data-reset-overlay="${o.id}">Reset position</button>` : ""}${!audioOnly ? `<label>Placement<select data-overlay-field="layout"><option value="top" ${o.layout === "top" ? "selected" : ""}>Top</option><option value="bottom" ${o.layout === "bottom" ? "selected" : ""}>Bottom</option><option value="full" ${o.layout === "full" ? "selected" : ""}>Full frame</option></select></label>` : ""}${a?.has_audio && !audioOnly ? `<label class="inline-label">Play clip audio<input type="checkbox" data-overlay-field="audio" ${o.audio ? "checked" : ""}></label>` : ""}${a?.has_audio && (o.audio || audioOnly) ? `<label>Audio volume<input type="range" min="0" max="1" step="0.01" data-overlay-field="volume" value="${o.volume ?? 0.4}"></label>` : ""}<label class="inline-label">${audioOnly ? "Enable audio" : "Show overlay"}<input type="checkbox" data-overlay-field="enabled" ${o.enabled ? "checked" : ""}></label></article>`;
       })
       .join("");
     $("punch-list").innerHTML = p.punches
@@ -154,58 +155,6 @@ export function createProduction({
       change();
     };
   }
-  for (const key of ["topic", "hook", "hook_reason", "cta", "app_bundle_id"]) {
-    $(`story-${key}`).onfocus = pushUndo;
-    $(`story-${key}`).oninput = (e) => {
-      getProject().story[key] = e.target.value;
-      change();
-    };
-  }
-  $("suggest-hooks").onclick = act(async () => {
-    const p = getProject(),
-      result = await api(
-        "/api/hooks?" +
-          new URLSearchParams({ topic: p.story.topic || p.brief.goal }),
-      );
-    $("hook-suggestions").innerHTML = result.patterns
-      .map(
-        (h) =>
-          `<button class="hook-choice" data-hook="${esc(h.text)}">${esc(h.text)}<small>${esc(h.purpose)}</small></button>`,
-      )
-      .join("");
-    $("hook-history").innerHTML =
-      result.related_performance
-        .map(
-          (h) =>
-            `<p class="panel-hint">${esc(h.text)} · ${h.views ?? "—"} views · ${h.retention === null ? "—" : Math.round(h.retention * 100) + "%"} retention</p>`,
-        )
-        .join("") || '<p class="panel-hint">No recorded results.</p>';
-  });
-  $("hook-suggestions").onclick = (e) => {
-    const b = e.target.closest("[data-hook]");
-    if (!b) return;
-    pushUndo();
-    getProject().story.hook = b.dataset.hook;
-    $("story-hook").value = b.dataset.hook;
-    change();
-  };
-  $("save-hook-performance").onclick = act(async () => {
-    const p = getProject(),
-      views = $("hook-views").value,
-      retention = $("hook-retention").value;
-    await api("/api/hooks", {
-      method: "POST",
-      body: {
-        text: p.story.hook,
-        topic: p.story.topic,
-        source_url: $("hook-source").value,
-        views: views === "" ? null : Number(views),
-        retention: retention === "" ? null : Number(retention) / 100,
-        notes: p.story.hook_reason,
-      },
-    });
-    toast("Hook saved with the supplied performance evidence.");
-  });
   $("retake-list").onclick = act(async (e) => {
     const preview = e.target.closest("[data-preview-take]");
     if (preview) {
@@ -312,6 +261,7 @@ export function createProduction({
     }
     change();
     render(p);
+    if (!asMusic) selectLayer({ kind: "overlay", id: p.overlays.at(-1).id });
     if (asMusic) {
       const controls = document.querySelector(".music-tools");
       controls.open = true;
@@ -434,10 +384,26 @@ export function createProduction({
     if (o[field] === value) return;
     pushUndo();
     o[field] = value;
+    if (field === "layout") {
+      delete o.x;
+      delete o.y;
+    }
     change();
-    if (field === "audio") render(p);
+    if (field === "audio" || field === "layout") render(p);
   };
   $("overlay-list").onclick = (e) => {
+    const reset = e.target.closest("[data-reset-overlay]");
+    if (reset) {
+      const o = getProject().overlays.find(
+        (o) => o.id === reset.dataset.resetOverlay,
+      );
+      pushUndo();
+      delete o.x;
+      delete o.y;
+      change();
+      render(getProject());
+      return;
+    }
     const b = e.target.closest("[data-remove-overlay]");
     if (!b) return;
     const p = getProject();
@@ -495,16 +461,15 @@ export function createProduction({
     change();
     render(p);
   };
-  const overlayAudio = new Map();
+  const overlayAudio = new Map(),
+    overlayNodes = new Map();
   function updatePreview() {
     const p = getProject();
     if (!p) return;
     const t = video.currentTime || 0,
       edited = isEdited(),
       stage = $("video-stage"),
-      holder = $("reference-overlay"),
-      image = $("reference-image"),
-      clip = $("reference-video");
+      holder = $("reference-overlay");
     const z = edited
       ? p.punches.filter((z) => z.enabled && z.start <= t && t < z.end).at(-1)
       : null;
@@ -514,50 +479,77 @@ export function createProduction({
       takePreviewEnd = null;
       video.pause();
     }
-    const o = edited
-      ? p.overlays
-          .filter(
-            (o) =>
-              o.enabled &&
-              o.start <= t &&
-              t < o.end &&
-              library.find((a) => a.id === o.asset_id)?.kind !== "audio",
-          )
-          .at(-1)
-      : null;
-    holder.hidden = !o;
-    if (o) {
-      const a = library.find((a) => a.id === o.asset_id),
-        ratio = 9 / 16,
-        h = Math.min(stage.clientHeight, stage.clientWidth / ratio),
-        w = Math.min(stage.clientWidth, stage.clientHeight * ratio),
-        full = o.layout === "full";
-      holder.style.width = `${w * (full ? 1 : 0.88)}px`;
-      holder.style.height = `${h * (full ? 1 : 0.38)}px`;
-      holder.style.left = `${(stage.clientWidth - w * (full ? 1 : 0.88)) / 2}px`;
-      holder.style.top = `${(stage.clientHeight - h) / 2 + h * (full ? 0 : o.layout === "top" ? 0.05 : 0.48)}px`;
-      const src = `/api/assets/${o.asset_id}/media`;
-      image.hidden = a?.kind === "video";
-      clip.hidden = a?.kind !== "video";
-      if (a?.kind === "video") {
-        if (clip.dataset.asset !== a.id) {
-          clip.src = src;
-          clip.dataset.asset = a.id;
-          clip.load();
-        }
+    const visible = new Set();
+    for (const [order, o] of p.overlays.entries()) {
+      const a = library.find((a) => a.id === o.asset_id);
+      if (
+        !edited ||
+        !o.enabled ||
+        o.start > t ||
+        t >= o.end ||
+        !a ||
+        a.kind === "audio"
+      )
+        continue;
+      visible.add(o.id);
+      let node = overlayNodes.get(o.id);
+      if (node && node.dataset.asset !== o.asset_id) {
+        node.querySelector("video")?.pause();
+        node.remove();
+        overlayNodes.delete(o.id);
+        node = null;
+      }
+      if (!node) {
+        node = document.createElement("div");
+        node.className = "canvas-overlay";
+        node.dataset.canvasOverlay = o.id;
+        node.dataset.asset = o.asset_id;
+        node.setAttribute("role", "button");
+        node.tabIndex = 0;
+        const content = document.createElement(
+          a.kind === "video" ? "video" : "img",
+        );
+        content.src = `/api/assets/${o.asset_id}/media`;
+        content.draggable = false;
+        if (a.kind === "video") {
+          content.muted = true;
+          content.playsInline = true;
+          content.preload = "metadata";
+          content.addEventListener("loadedmetadata", updatePreview);
+        } else content.alt = a.name;
+        node.append(content);
+        holder.append(node);
+        overlayNodes.set(o.id, node);
+      }
+      const b = overlayBox(o);
+      node.setAttribute("aria-label", `Overlay: ${a.name}`);
+      Object.assign(node.style, {
+        width: `${b.width * 100}%`,
+        height: `${b.height * 100}%`,
+        left: `${(b.x - b.width / 2) * 100}%`,
+        top: `${(b.y - b.height / 2) * 100}%`,
+        zIndex: order,
+      });
+      const clip = node.querySelector("video");
+      if (clip) {
         const expected = o.asset_in + t - o.start;
         if (
           Number.isFinite(clip.duration) &&
           Math.abs(clip.currentTime - expected) > 0.15
         )
           clip.currentTime = Math.min(expected, clip.duration);
-        if (!video.paused) clip.play().catch(() => {});
-        else clip.pause();
-      } else if (image.dataset.asset !== o.asset_id) {
-        image.src = src;
-        image.dataset.asset = o.asset_id;
+        if (video.paused) clip.pause();
+        else clip.play().catch(() => {});
       }
-    } else clip.pause();
+    }
+    holder.hidden = !visible.size;
+    for (const [id, node] of overlayNodes)
+      if (!visible.has(id)) {
+        node.querySelector("video")?.pause();
+        node.remove();
+        overlayNodes.delete(id);
+      }
+    onPreviewUpdate();
     const sounding = new Set();
     if (edited && !video.paused && !video.muted)
       for (const o of p.overlays) {

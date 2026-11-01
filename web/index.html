@@ -4,27 +4,20 @@
   <head>
     <meta charset="utf-8" />
     <meta content="width=device-width,initial-scale=1" name="viewport" />
-    <title>Edit</title>
+    <title>Reels Factory</title>
     <link
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23111111'/%3E%3Cpath d='M12 11h16v4H16v3h10v4H16v3h12v4H12z' fill='white'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23111'/%3E%3Ctext x='7' y='27' font-family='Arial' font-size='21' font-weight='700' fill='white'%3ERF%3C/text%3E%3C/svg%3E"
       rel="icon"
     />
-    <link href="/static/style.css?v=simple-5" rel="stylesheet" />
-    <script src="/static/app.js?v=simple-5" type="module"></script>
+    <link href="/static/style.css?v=factory-3" rel="stylesheet" />
+    <script src="/static/app.js?v=factory-3" type="module"></script>
   </head>
   <body>
     <div id="app">
       <header class="topbar">
-        <a aria-label="Edit home" class="brand" href="/">Edit</a>
-        <div class="project-title-slot">
-          <input
-            aria-label="Project name"
-            disabled=""
-            id="project-name"
-            maxlength="200"
-            placeholder="Untitled video"
-          />
-        </div>
+        <a aria-label="Reels Factory home" class="brand" href="/"
+          >Reels Factory</a
+        >
         <div class="header-end">
           <span class="save-status" id="save-status" role="status"></span
           ><button class="button subtle" id="import-button">
@@ -32,18 +25,14 @@
           ><button class="button primary" disabled="" id="export-button">
             Export video
           </button>
-          <details class="more-menu">
-            <summary aria-label="More options">⋯</summary>
-            <div class="more-actions">
-              <button
-                class="button subtle"
-                disabled=""
-                id="project-settings-button"
-              >
-                Project settings</button
-              ><button class="text-button" id="help-button">Help</button>
-            </div>
-          </details>
+          <button
+            aria-label="Help"
+            class="icon-button"
+            id="help-button"
+            title="Help"
+          >
+            ?
+          </button>
         </div>
       </header>
       <main>
@@ -59,7 +48,7 @@
             <strong>Choose a video</strong><span>or drop it here</span>
           </div>
         </section>
-        <section class="editor" hidden="" id="editor">
+        <section class="editor panel-open" hidden="" id="editor">
           <div class="editing-grid">
             <div class="preview-column">
               <div class="preview-card">
@@ -74,37 +63,32 @@
                     ></div>
                   </div>
 
-                  <div class="editor-tools">
-                    <button class="button subtle" id="open-captions">
-                      Captions</button
-                    ><button class="button subtle" id="open-media">Media</button
-                    ><button class="button subtle" id="auto-edit">
-                      Auto edit
-                    </button>
-                  </div>
+                  <button
+                    aria-controls="inspector"
+                    aria-expanded="true"
+                    aria-label="Open tools"
+                    class="icon-button panel-toggle"
+                    hidden=""
+                    id="open-inspector"
+                    title="Open tools"
+                  >
+                    ←
+                  </button>
                 </div>
                 <div class="canvas-area">
                   <div
-                    aria-label="Play or pause video"
                     class="video-stage"
                     id="video-stage"
-                    role="button"
+                    role="group"
                     tabindex="0"
+                    aria-label="Video preview"
                   >
                     <video id="video" playsinline="" preload="metadata"></video>
                     <div
                       class="reference-overlay"
                       hidden=""
                       id="reference-overlay"
-                    >
-                      <img alt="Reference overlay" id="reference-image" /><video
-                        hidden=""
-                        id="reference-video"
-                        muted=""
-                        playsinline=""
-                        preload="metadata"
-                      ></video>
-                    </div>
+                    ></div>
                     <div class="video-placeholder" id="video-placeholder">
                       Preparing preview…
                     </div>
@@ -112,6 +96,12 @@
                       class="caption-overlay"
                       dir="auto"
                       id="caption-overlay"
+                    ></div>
+                    <div
+                      aria-hidden="true"
+                      class="canvas-selection"
+                      hidden=""
+                      id="canvas-selection"
                     ></div>
                   </div>
                 </div>
@@ -293,58 +283,41 @@
                   </button>
                 </div>
               </div>
-              <section class="review-stage" hidden="" id="review-stage">
-                <div class="preview-top">
-                  <span>Export preview</span
-                  ><span class="sr-only" id="review-version-label"></span>
-                </div>
-                <div class="canvas-area">
-                  <div class="review-phone">
-                    <video
-                      aria-label="Encoded review video"
-                      controls=""
-                      id="review-video"
-                      playsinline=""
-                      preload="metadata"
-                    ></video>
-                  </div>
-                </div>
-                <div class="review-downloads" id="review-downloads"></div>
-              </section>
             </div>
-            <aside class="inspector" hidden="" id="inspector">
+            <aside class="inspector" id="inspector">
               <div class="panel-tabs" role="tablist">
                 <button
-                  aria-controls="subtitles-panel"
-                  aria-selected="false"
-                  id="subtitles-tab"
+                  aria-controls="auto-panel"
+                  aria-selected="true"
+                  id="auto-tab"
                   role="tab"
                 >
-                  Captions</button
+                  Auto Edit</button
                 ><button
                   aria-controls="visuals-panel"
                   aria-selected="false"
                   id="visuals-tab"
                   role="tab"
                 >
-                  Media</button
-                ><button
-                  aria-controls="review-panel"
-                  aria-selected="false"
-                  id="review-tab"
-                  role="tab"
-                >
-                  Export
+                  Media
                 </button>
                 <button
-                  aria-label="Close panel"
+                  aria-controls="subtitles-panel"
+                  aria-selected="false"
+                  id="subtitles-tab"
+                  role="tab"
+                >
+                  Captions
+                </button>
+                <button
+                  aria-label="Close tools"
                   class="icon-button"
                   id="close-inspector"
+                  title="Close tools"
                 >
-                  ×
+                  →
                 </button>
               </div>
-
               <div class="panel-body" hidden="" id="subtitles-panel">
                 <div class="subtitle-actions">
                   <select aria-label="Spoken language" id="language">
@@ -564,92 +537,61 @@
                 <div class="list-heading"><span>Effects</span></div>
                 <div id="punch-list"></div>
               </div>
-              <div class="panel-body" hidden="" id="review-panel">
-                <label class="field-label" for="review-version"
-                  >Exported video</label
-                ><select id="review-version"></select>
-                <div class="empty-list" id="no-exports">No exports yet</div>
-                <details class="controls-group">
-                  <summary>Leave feedback</summary>
-                  <form class="review-form" hidden="" id="review-form">
-                    <div class="review-time-row">
-                      <label
-                        >Playback time<input
-                          aria-label="Review note time"
-                          id="review-time"
-                          required=""
-                          value="00:00.00" /></label
-                      ><button
-                        class="text-button"
-                        id="capture-review-time"
-                        type="button"
-                      >
-                        Use playhead
-                      </button>
-                    </div>
-                    <label
-                      >What should change?<textarea
-                        id="review-change"
-                        maxlength="4000"
-                        required=""
-                      ></textarea>
-                    </label>
-                    <label
-                      >Why?<textarea
-                        id="review-reason"
-                        maxlength="4000"
-                        required=""
-                      ></textarea>
-                    </label>
-                    <label
-                      >Remember this for<select id="review-scope">
-                        <option value="this_edit">This edit only</option>
-                        <option value="reusable">
-                          Future edits (reusable preference)
-                        </option>
-                      </select></label
-                    >
-                    <button class="button analyze" type="submit">
-                      Save timecoded note
-                    </button>
-                  </form>
-                </details>
 
-                <div hidden="" id="review-notes"></div>
-                <details class="controls-group">
-                  <summary>Saved feedback</summary>
-                  <form class="history-form" id="history-form">
-                    <label
-                      >Search editing memory<input
-                        id="history-query"
-                        type="search" /></label
-                    ><label class="inline-label"
-                      >Reusable preferences only<input
-                        id="history-reusable"
-                        type="checkbox" /></label
-                    ><button class="button subtle" type="submit">
-                      Search history
-                    </button>
-                  </form>
-                  <div id="history-results"></div>
+              <div class="panel-body" id="auto-panel">
+                <button class="button analyze" id="prepare-button">
+                  Auto edit video</button
+                ><button class="button subtle" id="analyze-button">
+                  Remove pauses
+                </button>
+                <details class="retakes">
+                  <summary>Compare takes</summary>
+                  <div id="retake-list"></div>
                 </details>
                 <details class="controls-group">
-                  <summary>Export options</summary>
-                  <div class="export-actions">
-                    <input
-                      aria-label="Version name"
-                      id="export-label"
-                      maxlength="120"
-                      placeholder="Version name"
-                    /><button
-                      class="button subtle"
-                      disabled=""
-                      id="plain-export-button"
-                    >
-                      Export without add-ons
-                    </button>
-                  </div>
-                  <div class="export-result" hidden="" id="export-result"></div>
+                  <summary>Pause settings</summary>
+                  <fieldset class="settings" id="silence-settings">
+                    <label
+                      >Quiet threshold
+                      <output id="threshold-value">−35 dB</output
+                      ><input
+                        id="threshold"
+                        max="-15"
+                        min="-60"
+                        step="1"
+                        type="range"
+                        value="-35"
+                    /></label>
+                    <div class="two-settings">
+                      <label
+                        >Minimum pause
+                        <div class="unit-input">
+                          <input
+                            aria-label="Minimum silence duration"
+                            id="minimum"
+                            max="5"
+                            min="0.15"
+                            step="0.05"
+                            type="number"
+                            value="0.55"
+                          /><span>sec</span>
+                        </div></label
+                      ><label
+                        >Keep around speech
+                        <div class="unit-input">
+                          <input
+                            aria-label="Cut edge padding"
+                            id="padding"
+                            max="0.6"
+                            min="0"
+                            step="0.02"
+                            type="number"
+                            value="0.12"
+                          /><span>sec</span>
+                        </div></label
+                      >
+                    </div>
+                  </fieldset>
                 </details>
               </div>
             </aside>
@@ -684,158 +626,124 @@
         to restore it.
       </p>
       <p>Space: play or pause. ⌘B: split. Delete: remove clip. ⌘Z: undo.</p>
+      <p>
+        Click a caption or visual overlay in the preview, then drag it to move
+        it. Selecting it on the timeline selects it in the preview too. Arrow
+        keys move a selected layer; Shift moves it faster.
+      </p>
     </dialog>
-    <dialog id="project-dialog">
+
+    <dialog id="export-dialog">
       <div class="dialog-heading">
-        <h2>Project settings</h2>
-        <button
-          aria-label="Close project settings"
-          class="icon-button"
-          id="close-project"
-        >
+        <h2>Export</h2>
+        <button aria-label="Close export" class="icon-button" id="close-export">
           ×
         </button>
       </div>
-      <div class="project-settings-body">
-        <details class="brief-card">
-          <summary>Brief</summary>
-          <label
-            >What should this clip communicate?<textarea
-              id="brief-goal"
-              maxlength="4000"
-            ></textarea>
-          </label>
-          <label
-            >Target duration &amp; format<input
-              id="brief-target"
-              maxlength="200"
-          /></label>
-          <label
-            >Usage-rights notes<textarea
-              id="brief-rights"
-              maxlength="4000"
-            ></textarea>
-          </label>
-          <div class="list-heading">
-            <span>Sources</span
-            ><button class="text-button" id="add-reference">
-              ＋ Add source
-            </button>
+      <div class="export-layout">
+        <section class="export-preview" id="review-stage">
+          <span class="sr-only" id="review-version-label"></span>
+
+          <div class="canvas-area">
+            <div class="review-phone">
+              <video
+                aria-label="Encoded review video"
+                controls=""
+                id="review-video"
+                playsinline=""
+                preload="metadata"
+              ></video>
+            </div>
           </div>
-          <div id="reference-list"></div>
-        </details>
-        <details class="brief-card production-story">
-          <summary>Story</summary>
-          <div class="production-form">
-            <label>Topic<input id="story-topic" maxlength="500" /></label
-            ><button class="button subtle" id="suggest-hooks">
-              Suggest hooks
-            </button>
-            <div id="hook-suggestions"></div>
-            <div id="hook-history"></div>
-            <label
-              >Opening hook<textarea
-                id="story-hook"
-                maxlength="1000"
-              ></textarea></label
-            ><label
-              >Why this hook?<textarea
-                id="story-hook_reason"
-                maxlength="2000"
-              ></textarea></label
-            ><label
-              >Call to action<input id="story-cta" maxlength="1000" /></label
-            ><label
-              >App referenced in this clip<input
-                id="story-app_bundle_id"
-                maxlength="200"
-            /></label>
-            <details>
-              <summary>Save measured hook performance</summary>
-              <label
-                >Published source URL<input id="hook-source" type="url"
-              /></label>
-              <div class="two-settings">
+          <div class="review-downloads" id="review-downloads"></div>
+        </section>
+        <div class="export-details" id="review-panel">
+          <label class="field-label" for="review-version">Exported video</label
+          ><select id="review-version"></select>
+          <div class="empty-list" id="no-exports">No exports yet</div>
+          <details class="controls-group">
+            <summary>Leave feedback</summary>
+            <form class="review-form" hidden="" id="review-form">
+              <div class="review-time-row">
                 <label
-                  >Views<input id="hook-views" min="0" type="number" /></label
-                ><label
-                  >Retention (%)<input
-                    id="hook-retention"
-                    max="100"
-                    min="0"
-                    step="0.1"
-                    type="number"
-                /></label>
+                  >Playback time<input
+                    aria-label="Review note time"
+                    id="review-time"
+                    required=""
+                    value="00:00.00" /></label
+                ><button
+                  class="text-button"
+                  id="capture-review-time"
+                  type="button"
+                >
+                  Use playhead
+                </button>
               </div>
-              <button class="button subtle" id="save-hook-performance">
-                Save hook evidence
+              <label
+                >What should change?<textarea
+                  id="review-change"
+                  maxlength="4000"
+                  required=""
+                ></textarea>
+              </label>
+              <label
+                >Why?<textarea
+                  id="review-reason"
+                  maxlength="4000"
+                  required=""
+                ></textarea>
+              </label>
+              <label
+                >Remember this for<select id="review-scope">
+                  <option value="this_edit">This edit only</option>
+                  <option value="reusable">
+                    Future edits (reusable preference)
+                  </option>
+                </select></label
+              >
+              <button class="button analyze" type="submit">
+                Save timecoded note
               </button>
-            </details>
-          </div>
-        </details>
-        <details class="source-info">
-          <summary>Source file</summary>
-          <div class="project-details" id="project-details"></div>
-          <span id="edited-summary"></span>
-        </details>
-      </div>
-      <details class="controls-group">
-        <summary>Automatic editing</summary>
-        <div class="auto-edit-settings" id="cuts-panel">
-          <button class="button analyze" id="prepare-button">Auto edit</button
-          ><button class="button subtle" id="analyze-button">
-            Remove pauses
-          </button>
-          <details class="retakes">
-            <summary>Compare takes</summary>
-            <div id="retake-list"></div>
+            </form>
+          </details>
+          <div hidden="" id="review-notes"></div>
+          <details class="controls-group">
+            <summary>Saved feedback</summary>
+            <form class="history-form" id="history-form">
+              <label
+                >Search editing memory<input
+                  id="history-query"
+                  type="search" /></label
+              ><label class="inline-label"
+                >Reusable preferences only<input
+                  id="history-reusable"
+                  type="checkbox" /></label
+              ><button class="button subtle" type="submit">
+                Search history
+              </button>
+            </form>
+            <div id="history-results"></div>
           </details>
           <details class="controls-group">
-            <summary>Pause settings</summary>
-            <fieldset class="settings" id="silence-settings">
-              <label
-                >Quiet threshold <output id="threshold-value">−35 dB</output
-                ><input
-                  id="threshold"
-                  max="-15"
-                  min="-60"
-                  step="1"
-                  type="range"
-                  value="-35"
-              /></label>
-              <div class="two-settings">
-                <label
-                  >Minimum pause
-                  <div class="unit-input">
-                    <input
-                      aria-label="Minimum silence duration"
-                      id="minimum"
-                      max="5"
-                      min="0.15"
-                      step="0.05"
-                      type="number"
-                      value="0.55"
-                    /><span>sec</span>
-                  </div></label
-                ><label
-                  >Keep around speech
-                  <div class="unit-input">
-                    <input
-                      aria-label="Cut edge padding"
-                      id="padding"
-                      max="0.6"
-                      min="0"
-                      step="0.02"
-                      type="number"
-                      value="0.12"
-                    /><span>sec</span>
-                  </div></label
-                >
-              </div>
-            </fieldset>
+            <summary>Export options</summary>
+            <div class="export-actions">
+              <input
+                aria-label="Version name"
+                id="export-label"
+                maxlength="120"
+                placeholder="Version name"
+              /><button
+                class="button subtle"
+                disabled=""
+                id="plain-export-button"
+              >
+                Export without add-ons
+              </button>
+            </div>
+            <div class="export-result" hidden="" id="export-result"></div>
           </details>
         </div>
-      </details>
+      </div>
     </dialog>
   </body>
 </html>

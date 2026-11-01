@@ -45,9 +45,11 @@ def remap_subtitles(
                 "end": offset + right - start,
                 "text": cue["text"],
             }
+            mapped.update({key: cue[key] for key in ("x", "y") if cue.get(key) is not None})
             if (
                 result
                 and result[-1]["text"] == mapped["text"]
+                and all(result[-1].get(key) == mapped.get(key) for key in ("x", "y"))
                 and abs(result[-1]["end"] - mapped["start"]) < 0.025
             ):
                 result[-1]["end"] = mapped["end"]
@@ -152,7 +154,11 @@ def ass_text(cues: list[dict], width: int, height: int, style: dict) -> str:
             .replace("\r", "")
             .replace("\n", "\\N")
         )
+        position = ""
+        if cue.get("x") is not None and cue.get("y") is not None:
+            x, y = round(cue["x"] * width, 2), round(cue["y"] * height, 2)
+            position = f"{{\\an5\\pos({x},{y})}}"
         result.append(
-            f"Dialogue: 0,{timestamp(cue['start'], True)},{timestamp(cue['end'], True)},Default,,0,0,0,,{text}"
+            f"Dialogue: 0,{timestamp(cue['start'], True)},{timestamp(cue['end'], True)},Default,,0,0,0,,{position}{text}"
         )
     return "\n".join(result) + "\n"

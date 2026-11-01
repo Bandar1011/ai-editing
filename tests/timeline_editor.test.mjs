@@ -60,3 +60,22 @@ test("trimming a source remains reversible and bounded, including removing the l
   assert.deepEqual(clipsFor(10, cutsForClips(10, [], [], makeId)), []);
   assert.equal(sourceAt([], 0), 0);
 });
+
+test("overlapping additions stay individually selectable in lanes of one track", async () => {
+  const { lanesFor } = await import("../web/timeline.mjs");
+  assert.deepEqual(
+    lanesFor([
+      { start: 0, end: 10 },
+      { start: 0, end: 5 },
+      { start: 5, end: 8 },
+    ]),
+    [0, 1, 1],
+  );
+  assert.deepEqual(
+    lanesFor([
+      { start: 4, end: 6 },
+      { start: 0, end: 4 },
+    ]),
+    [0, 0],
+  );
+});
