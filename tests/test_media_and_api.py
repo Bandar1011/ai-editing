@@ -171,6 +171,11 @@ def test_upload_preview_ranges_and_conflict_protection(recording, tmp_path):
         assert response.status_code == 200, response.text
         p = wait_for(app.state.editor, response.json()["id"])
         assert p["media_ready"] and p["waveform_ready"]
+        assert p["subtitle_style"]["font_size"] == 52
+        assert p["subtitle_style"]["font_family"] == "Geeza Pro"
+        assert p["subtitle_style"]["font_weight"] == 400
+        assert p["subtitle_style"]["outline"] == 4.5
+        assert p["silence_options"] == {"threshold_db": -35, "minimum": .12, "padding": .025}
         route = f"/api/projects/{p['id']}"
         playback = client.get(route + "/media", headers={"Range": "bytes=0-99"})
         assert playback.status_code == 206

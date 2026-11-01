@@ -11,6 +11,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from .story import aligned_words, bound_words, short_captions
+from .presets import SPEECH
 from .timeline import kept_ranges, parse_srt
 
 
@@ -252,12 +253,13 @@ def extract_speech_audio(source: Path, wav: Path) -> None:
     ])
 
 
-def speech_regions(wav: Path, model: Path, padding=0.025) -> list[dict]:
+def speech_regions(wav: Path, model: Path, padding=SPEECH["padding"]) -> list[dict]:
     if not model.is_file():
         raise ValueError("Install the local speech detector with scripts/setup_vad.py.")
     output = run([
         binary("whisper-vad-speech-segments"), "-f", str(wav), "-vm", str(model),
-        "-t", "2", "-vt", "0.55", "-vspd", "80", "-vsd", "80",
+        "-t", "2", "-vt", str(SPEECH["vad_threshold"]),
+        "-vspd", str(SPEECH["minimum_speech_ms"]), "-vsd", str(SPEECH["minimum_silence_ms"]),
         "-vp", str(round(padding * 1000)), "-vo", "0", "-np",
     ], timeout=300)
     # The standalone whisper.cpp VAD tool reports centiseconds, not seconds.

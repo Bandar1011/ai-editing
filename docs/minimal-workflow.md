@@ -2,6 +2,8 @@
 
 The chat agent directs the edit. Local tools execute it and the browser keeps every decision reviewable. A source clip is never modified or published automatically.
 
+Repeatable settings live in `aiedit/presets.py`: fixed title and caption sizes, two title lines maximum, 1–3 caption words, 120 ms minimum pauses, and 25 ms speech shoulders. Detection and rendering apply these consistently. The agent decides takes, caption corrections, title wording, reference type/content, and contextual placement; it intervenes in timing only for a demonstrated detector problem or specific feedback. Already approved edits remain unchanged.
+
 The style reference is [Aiden Johnston's reel](https://www.instagram.com/reel/DegOQG6Tydw/): hooks, word-timed short captions, hard cuts, a labeled B-roll/music library, real browser references, occasional punch-ins, and a CTA. This workflow captures app references on the same laptop. It uses the installed local whisper.cpp alignment engine in place of the reel's WhisperX setup.
 
 ## First cut
@@ -108,7 +110,7 @@ Use [the title-writing skill](../skills/reel-titles/SKILL.md) to choose a faithf
 uv run scripts/title_card.py /absolute/private/path/title.png --line "First line" --line "Second line"
 ```
 
-The helper shapes text with FFmpeg/libass and an installed font; `uv` supplies Pillow only for the card geometry. It targets 74% frame width, caps glyph size, and limits the card to 18% of a 9:16 frame's height. It paints the shaped glyph mask with exact black rather than retaining libass's lifted RGB black. Excessively long lines fail explicitly so characters are never silently clipped. Use `--target-width`, `--font`, `--size`, and `--width` for a deliberate change, then inspect the actual words. Never redistribute system font files. Place the transparent asset at its actual frame-relative `width`/`height`, centered near the top and clear of the face, without stretching. For clean HLG title white, set that overlay's `white_nits` to `1000`; this changes graphics only. Ordinary references default to `203`. Source-time overlays must map to 2–3 seconds on the edited timeline. Use white captions with a black outline and 1–3 words per cue.
+The helper uses the approved fixed title preset: Geeza Pro Regular, 129 px per 1080 frame width, up to two lines, and 2.5 edited seconds. Longer wording fails rather than shrinking or adding lines. It shapes locally with FFmpeg/libass and paints exact black using Pillow. Set only the frame `--width` normally; change font or size only for an explicit style request. Never redistribute system fonts. Place the card using its actual normalized dimensions without stretching. HLG titles use `white_nits: 1000`; ordinary references default to `203`. This changes graphics only. New projects also start with the approved caption style (52 at 1080 image height, Geeza Pro Regular, 4.5 outline); authored existing styles are preserved.
 
 Save with the latest `base_revision`; preserve all unrelated fields. Production decisions use:
 
@@ -122,6 +124,8 @@ Save with the latest `base_revision`; preserve all unrelated fields. Production 
 ```
 
 Overlays and punch-ins use source times; music is continuous on the edited timeline. Video references are muted by default. Set an overlay's `audio` to `true` and `volume` from 0 to 1 to include its audio. Audio-only assets can also be timed overlays, for effects or additional speech, with `start`, `end`, and `asset_in` controlling their source range. Their audio follows the same cuts as the main clip. Layouts are `top`, `bottom`, or `full`; top cards reserve space for the face, but placement still requires visual review. Use occasional 1.1× punch-ins when they add emphasis. Do not insert a change every three seconds mechanically. Music loops, fades at the ends, and can duck under the voice. Browser audio preview is approximate; encoded mixing is authoritative.
+
+Inspect the real shot before placing a reference. Pointing and gaze indicate where an inset belongs; keep the face, hand, and captions visible. Use a focused real screenshot for a static reference and an actual browser/app recording for an interaction when the capture tool is available. Full-screen references require an editorial reason. A still spanning removed speech gaps is composed as one continuous overlay, preventing a camera flash at the join. Video assets retain their source-time skips; they are not flattened into a still.
 
 The browser edits one 9:16 vertical video. A fresh clip shows only video and original audio. Captions, overlays, effects, music, and added audio each get one track only while they have content. The timeline closes removed gaps. Click a clip, position the playhead, and use **Split** (⌘B), then **Delete** to remove a piece. Drag a clip edge to trim or extend it into available source footage; double-click an edge to restore it. **Restore full video** resets trimming and splits; undo restores the prior edit. Source media and source-timed captions and overlays remain unchanged. Split seams are persisted as `split_points` on the source, separately from the removal ranges in `cuts`. Panels open only when needed; the editor has no project picker or Edited/Original switch.
 

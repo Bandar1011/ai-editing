@@ -18,9 +18,11 @@ Open **http://127.0.0.1:8775**. Import a video through the browser or give Codex
 - Silence detection, manual source-time cuts, draggable boundaries, restore switches, undo/redo, and transcript-driven “Cut speech” actions.
 - Editable caption wording, timing, size, position, and UTF-8 SRT import. Arabic and other spoken languages are retained.
 - One-click first cuts combine speech-gap and quiet-interval cuts, isolated hesitation removal, and evidence-based retake selection. Ambiguous deliveries remain reviewable.
+- Shared presets keep title and caption sizes consistent. Titles use at most two lines at a fixed font size; overlong wording requires rewriting. Speech-gap settings are deterministic. The agent handles editorial choices, contextual reference placement, and review exceptions.
 - A project brief, original hook patterns, user-supplied performance history, and CTA planning.
 - A searchable local asset/mood library, deduplicated inbox import, and bounded yt-dlp media downloads.
 - Timed real screenshot/B-roll overlays, audio clips, optional punch-ins, and looping music with voice-priority ducking. Video-overlay audio is optional and has its own gain.
+- Still references remain continuous across cuts. Use insets near the presenter's gesture when appropriate; full-screen placement is an editorial choice rather than a default.
 - A single-video monochrome editor with a phone-sized 9:16 preview. Only populated tracks appear below video and original audio. Split, delete, and trim linked clips directly; extend an edge to recover footage, double-click to restore it, or undo.
 - One collapsible tools panel contains Auto Edit, Media, and Captions. Select a caption or visual overlay on its timeline or directly in the preview, then drag it or use arrow keys to move it (Shift moves ten pixels). Positions persist, support undo/redo, and carry through to exports. Exported videos open in a separate dialog.
 - Same-laptop app screenshots/recordings through an owned Simulator lease and fingerprinted build reuse. Read the [capture requirements](docs/minimal-workflow.md#app-references-on-this-mac).

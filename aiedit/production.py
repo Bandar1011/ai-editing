@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import media, story
 from .assets import valid_url
+from .presets import CAPTIONS, SPEECH
 from .timeline import kept_ranges, validate_intervals
 
 
@@ -69,10 +70,10 @@ class StoryPlan(Strict):
 
 class PrepareOptions(Strict):
     language: str = Field(default="auto", pattern=r"^(auto|[a-z]{2,3})$")
-    minimum_pause: float = Field(default=0.12, ge=0.06, le=5)
-    padding: float = Field(default=0.025, ge=0.01, le=0.6)
+    minimum_pause: float = Field(default=SPEECH["minimum_pause"], ge=0.06, le=5)
+    padding: float = Field(default=SPEECH["padding"], ge=0.01, le=0.6)
     choose_retakes: bool = True
-    max_words: int = Field(default=3, ge=1, le=3)
+    max_words: int = Field(default=CAPTIONS["max_words"], ge=1, le=3)
     remove_fillers: bool = True
 
 
@@ -180,7 +181,7 @@ def prepare(editor, identifier, options):
     warnings = []
     try:
         quiet = media.detect_silence(
-            editor.source(p), duration, -35, options.minimum_pause, options.padding
+            editor.source(p), duration, SPEECH["threshold_db"], options.minimum_pause, options.padding
         )
     except ValueError as exc:
         if "whole recording" not in str(exc):

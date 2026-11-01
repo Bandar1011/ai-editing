@@ -8,6 +8,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from aiedit.presets import CAPTIONS, SPEECH
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
     "command",
@@ -36,9 +39,9 @@ parser.add_argument(
 )
 parser.add_argument("value", nargs="?")
 parser.add_argument("--file", type=Path)
-parser.add_argument("--threshold", type=float, default=-35)
-parser.add_argument("--minimum", type=float, default=0.12)
-parser.add_argument("--padding", type=float, default=0.025)
+parser.add_argument("--threshold", type=float, default=SPEECH["threshold_db"])
+parser.add_argument("--minimum", type=float, default=SPEECH["minimum_pause"])
+parser.add_argument("--padding", type=float, default=SPEECH["padding"])
 parser.add_argument("--language", default="auto")
 parser.add_argument("--no-subtitles", action="store_true")
 parser.add_argument("--label", default="")
@@ -46,7 +49,7 @@ parser.add_argument("--format", choices=["source", "vertical"], default="source"
 parser.add_argument("--reusable", action="store_true")
 parser.add_argument("--note-id")
 parser.add_argument("--plain", action="store_true")
-parser.add_argument("--max-words", type=int, choices=[1, 2, 3], default=3)
+parser.add_argument("--max-words", type=int, choices=[1, 2, 3], default=CAPTIONS["max_words"])
 parser.add_argument("--source-url", default="")
 parser.add_argument(
     "--source-kind", choices=["local", "web", "simulator", "download"], default="local"

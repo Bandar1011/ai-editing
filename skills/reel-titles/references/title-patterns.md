@@ -8,7 +8,7 @@ Observed 2026-11-01: a sample of 18 distinct post covers (10 from the Popular vi
 
 - Arabic letterforms are a close visual match to Geeza Pro Regular, the user's chosen font. The video pixels do not expose an exact font name. Preserve regular weight; do not substitute a decorative Arabic face.
 - Black text, clean opaque white, compact padding, rounded outer corners, and rounded transitions where the line widths change. Two lines are common. No title shadow or black outline.
-- The checked native covers vary from approximately 55% to 90% of frame width depending on text length; the original reference is about 71%. The previous 45%-width edit was explicitly rejected as too small. Use 70–80% as a useful starting point, then judge the actual words and face clearance.
+- The checked native covers vary from approximately 55% to 90% of frame width depending on text length; the approved title is about 70%. The user subsequently requested a standard text size and no more than two lines. The shared preset freezes the approved visual scale at 129 px per 1080 frame width. Card width follows the words; do not enlarge or shrink the type to reach a target width for every title.
 - The user's recent posts and higher-view posts share this visual treatment. A visual template alone does not account for view differences.
 
 ## Writing patterns and plausible reasons

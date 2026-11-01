@@ -25,6 +25,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import media, production, story
 from .assets import AssetLibrary
 from .hooks import HookLibrary
+from .presets import CAPTIONS, SPEECH
 from .timeline import (
     kept_ranges,
     parse_srt,
@@ -69,15 +70,15 @@ class Subtitle(BaseModel):
 
 class SubtitleStyle(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    font_size: int = Field(default=48, ge=24, le=80)
+    font_size: int = Field(default=CAPTIONS["font_size"], ge=24, le=80)
     position: Literal["top", "bottom"] = "bottom"
     enabled: bool = True
     uppercase: bool = True
-    outline: float = Field(default=4, ge=0, le=8)
-    margin_percent: float = Field(default=18, ge=5, le=35)
-    max_words: int = Field(default=3, ge=1, le=3)
-    font_family: str = Field(default="Arial", pattern=r"^[A-Za-z0-9 ._-]{1,80}$")
-    font_weight: Literal[400, 700] = 700
+    outline: float = Field(default=CAPTIONS["outline"], ge=0, le=8)
+    margin_percent: float = Field(default=CAPTIONS["margin_percent"], ge=5, le=35)
+    max_words: int = Field(default=CAPTIONS["max_words"], ge=1, le=3)
+    font_family: str = Field(default=CAPTIONS["font_family"], pattern=r"^[A-Za-z0-9 ._-]{1,80}$")
+    font_weight: Literal[400, 700] = CAPTIONS["font_weight"]
 
 
 class Brief(BaseModel):
@@ -111,9 +112,9 @@ class Edit(BaseModel):
 
 
 class SilenceOptions(BaseModel):
-    threshold_db: float = Field(default=-35, ge=-65, le=-10, allow_inf_nan=False)
-    minimum: float = Field(default=0.12, ge=0.06, le=5, allow_inf_nan=False)
-    padding: float = Field(default=0.025, ge=0, le=0.6, allow_inf_nan=False)
+    threshold_db: float = Field(default=SPEECH["threshold_db"], ge=-65, le=-10, allow_inf_nan=False)
+    minimum: float = Field(default=SPEECH["minimum_pause"], ge=0.06, le=5, allow_inf_nan=False)
+    padding: float = Field(default=SPEECH["padding"], ge=0, le=0.6, allow_inf_nan=False)
 
 
 class TranscribeOptions(BaseModel):

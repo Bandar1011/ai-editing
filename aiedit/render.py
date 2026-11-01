@@ -107,10 +107,14 @@ def export_video(
             if not overlay.get("enabled", True):
                 continue
             asset = assets[overlay["asset_id"]]
+            kind = asset["metadata"]["kind"]
             spans = mapped_spans(overlay["start"], overlay["end"], kept)
+            if kind == "image" and spans:
+                # Cuts close source-time gaps. A still stays continuously visible
+                # through those joins instead of restarting a separate image input.
+                spans = [dict(spans[0], end=spans[-1]["end"])]
             for span in spans:
                 count += 1
-                kind = asset["metadata"]["kind"]
                 seek = (
                     overlay.get("asset_in", 0) + span["source_start"] - overlay["start"]
                 )
@@ -162,8 +166,9 @@ def export_video(
                     filters.append(
                         f"[{input_index}:v:0]trim=duration={length:.6f},setpts=PTS-STARTPTS+{span['start']:.6f}/TB,{image_format}scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color={pad_color},setsar=1{conversion}[asset{count}]"
                     )
+                    eof = "eof_action=repeat:repeatlast=1" if kind == "image" else "eof_action=pass:repeatlast=0"
                     filters.append(
-                        f"[{current}][asset{count}]overlay=x={x}:y={y}:format={overlay_format}:alpha=straight:eof_action=pass:repeatlast=0:enable='gte(t,{span['start']:.6f})*lt(t,{span['end']:.6f})'[o{count}]"
+                        f"[{current}][asset{count}]overlay=x={x}:y={y}:format={overlay_format}:alpha=straight:{eof}:enable='gte(t,{span['start']:.6f})*lt(t,{span['end']:.6f})'[o{count}]"
                     )
                     current = f"o{count}"
                 if overlay.get("audio") and asset["metadata"]["has_audio"]:

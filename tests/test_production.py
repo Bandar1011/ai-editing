@@ -290,6 +290,34 @@ def test_mapped_overlay_skips_deleted_source_time():
     ]
 
 
+def test_still_reference_has_no_camera_flash_across_a_cut(tmp_path):
+    from aiedit.render import export_video
+    source, image = tmp_path / "source.mp4", tmp_path / "reference.png"
+    media.run([media.binary("ffmpeg"), "-v", "error", "-f", "lavfi", "-i",
+               "color=blue:s=180x320:r=29.997350057415424:d=18.9", "-c:v", "libx264",
+               "-preset", "ultrafast", "-threads", "2", str(source)])
+    media.run([media.binary("ffmpeg"), "-v", "error", "-f", "lavfi", "-i",
+               "color=red:s=40x20", "-frames:v", "1", "-threads", "1", str(image)])
+    info = media.probe(source)
+    project = {"media": info, "cuts": [
+        {"start": a, "end": b} for a, b in
+        [(0, .58), (3.889, 10.09), (13.59, 14.825), (17.544, 17.795), (18.372, info["duration"])]
+    ], "subtitles": [], "subtitle_style": {}, "overlays": [{
+        "asset_id": "a" * 12, "start": 12.35, "end": 16.22,
+        "width": .5, "height": .15, "x": .5, "y": .2,
+    }]}
+    output = export_video(project, source, tmp_path / "exports", False,
+                          {"a" * 12: {"path": image, "metadata": {"kind": "image", "has_audio": False}}})
+    pixels = subprocess.run([
+        media.binary("ffmpeg"), "-v", "error", "-i", str(output),
+        "-vf", "crop=2:2:90:64,scale=1:1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-",
+    ], capture_output=True, check=True).stdout
+    missing = [n for n in range(len(pixels) // 3)
+               if 5.62 <= n / info["fps"] <= 8.12 and
+               (pixels[n * 3] < 180 or pixels[n * 3 + 2] > 60)]
+    assert not missing, f"Reference disappears at edited frames {missing}"
+
+
 def test_hook_performance_is_only_user_supplied(tmp_path):
     with TestClient(
         create_app(tmp_path / "data"), base_url="http://127.0.0.1"
