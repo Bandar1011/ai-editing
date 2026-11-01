@@ -611,3 +611,141 @@ def test_unknown_size_download_stops_its_owned_process_at_the_disk_budget(tmp_pa
     with pytest.raises(ValueError, match="100 MB"):
         download([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path)
     assert time.monotonic() - started < 3
+
+
+@pytest.mark.parametrize("kind", ["audio", "video"])
+def test_addon_audio_is_timed_through_cuts_and_can_be_muted(recording, tmp_path, kind):
+    import array
+    import math
+
+    silent = tmp_path / "silent.mp4"
+    tone = tmp_path / "effect.wav"
+    media.run(
+        [
+            media.binary("ffmpeg"),
+            "-v",
+            "error",
+            "-i",
+            str(recording),
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "copy",
+            "-an",
+            str(silent),
+        ]
+    )
+    media.run(
+        [
+            media.binary("ffmpeg"),
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:duration=4",
+            str(tone),
+        ]
+    )
+    asset_path = tone
+    if kind == "video":
+        asset_path = tmp_path / "reference-with-audio.mp4"
+        media.run(
+            [
+                media.binary("ffmpeg"),
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=128x96:rate=12:duration=4",
+                "-i",
+                str(tone),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-c:a",
+                "aac",
+                "-shortest",
+                str(asset_path),
+            ]
+        )
+    with TestClient(
+        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+    ) as client:
+        editor = client.app.state.editor
+        asset = client.post("/api/assets/import", json={"path": str(asset_path)}).json()
+        waveform = client.get(f"/api/assets/{asset['id']}/waveform")
+        assert (
+            waveform.status_code == 200
+            and waveform.headers["content-type"] == "image/png"
+        )
+        assert waveform.content.startswith(b"\x89PNG\r\n\x1a\n")
+        p = wait_for(editor, editor.create(silent, silent.name)["id"])
+        route = f"/api/projects/{p['id']}"
+        body = edit_body(p)
+        body.update(
+            cuts=[
+                {"id": "gap", "start": 2, "end": 3, "kind": "manual", "enabled": True}
+            ],
+            overlays=[
+                {
+                    "id": "sound",
+                    "asset_id": asset["id"],
+                    "start": 1,
+                    "end": 4,
+                    "asset_in": 0.25,
+                    "audio": True,
+                    "volume": 0.5,
+                }
+            ],
+        )
+        response = client.put(route, json=body)
+        assert response.status_code == 200, response.text
+        assert client.post(route + "/export", json={}).status_code == 200
+        p = wait_for(editor, p["id"])
+        output = editor.repo.directory(p["id"]) / "exports" / p["exports"][-1]["file"]
+        assert media.probe(output)["has_audio"]
+
+        def rms(at):
+            raw = subprocess.run(
+                [
+                    media.binary("ffmpeg"),
+                    "-v",
+                    "error",
+                    "-ss",
+                    str(at),
+                    "-t",
+                    "0.2",
+                    "-i",
+                    str(output),
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "8000",
+                    "-f",
+                    "f32le",
+                    "-",
+                ],
+                check=True,
+                capture_output=True,
+            ).stdout
+            values = array.array("f", raw)
+            return math.sqrt(sum(v * v for v in values) / len(values))
+
+        assert rms(0.3) < 0.001 and rms(3.4) < 0.001
+        assert rms(1.3) > 0.02 and rms(2.5) > 0.02
+        body = edit_body(p)
+        body["overlays"] = copy.deepcopy(p["overlays"])
+        body["overlays"][0]["audio"] = False
+        assert client.put(route, json=body).status_code == 200
+        client.post(route + "/export", json={})
+        p = wait_for(editor, p["id"])
+        output = editor.repo.directory(p["id"]) / "exports" / p["exports"][-1]["file"]
+        assert not media.probe(output)["has_audio"]
+        body = edit_body(p)
+        body["overlays"] = copy.deepcopy(p["overlays"])
+        body["overlays"][0].update(start=0, end=4.5)
+        assert client.put(route, json=body).status_code == 400

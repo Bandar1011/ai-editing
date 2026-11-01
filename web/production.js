@@ -12,6 +12,7 @@ export function createProduction({
   outputTime,
   isEdited,
   showOriginal,
+  refreshTimeline,
   task,
 }) {
   const $ = (id) => document.getElementById(id);
@@ -56,6 +57,8 @@ export function createProduction({
       library = await api("/api/assets");
       libraryReady = true;
       renderLibrary();
+      if (getProject()) render(getProject());
+      refreshTimeline();
     } finally {
       loading = false;
     }
@@ -67,12 +70,17 @@ export function createProduction({
     );
     $("asset-list").innerHTML =
       filtered
-        .map(
-          (a) =>
-            `<article class="asset-card"><strong>${esc(a.name)}</strong><small>${a.kind} · ${esc(a.tags.join(", "))}</small><p>${esc(a.description.slice(0, 140))}</p><button class="text-button" data-use-asset="${a.id}">${a.kind === "audio" ? "Use music" : "Add overlay"}</button><button class="text-button" data-edit-asset="${a.id}">Details</button></article>`,
-        )
-        .join("") ||
-      '<p class="panel-hint">Import a screenshot, recording, B-roll clip, or music track.</p>';
+        .map((a) => {
+          const media = `/api/assets/${a.id}/media`;
+          const thumb =
+            a.kind === "image"
+              ? `<img src="${media}" loading="lazy" alt="">`
+              : a.kind === "video"
+                ? `<video src="${media}" muted preload="metadata"></video>`
+                : '<span class="audio-icon" aria-hidden="true">♪</span>';
+          return `<article class="asset-card"><div class="asset-thumbnail">${thumb}</div><div class="asset-info"><strong title="${esc(a.name)}">${esc(a.name)}</strong><small>${a.kind === "image" ? "Image" : a.kind === "audio" ? "Audio" : "Video"}${a.kind !== "image" ? " · " + time(a.duration, false) : ""}</small><div class="asset-actions"><button class="text-button" data-use-asset="${a.id}">${a.kind === "audio" ? "Add audio" : "Add overlay"}</button>${a.has_audio ? `<button class="text-button" data-use-music="${a.id}">Use as music</button>` : ""}<button class="text-button" data-edit-asset="${a.id}">Details</button></div></div></article>`;
+        })
+        .join("") || '<p class="empty-list">No media</p>';
     const options =
       '<option value="">No music</option>' +
       library
@@ -100,6 +108,7 @@ export function createProduction({
     $("music-volume").value = p.music?.volume ?? 0.12;
     $("music-duck").checked = p.music?.duck ?? true;
     $("music-offset").value = p.music?.offset ?? 0;
+    document.querySelector(".retakes").hidden = !p.retakes.length;
     $("retake-list").innerHTML =
       p.retakes
         .map(
@@ -108,18 +117,17 @@ export function createProduction({
         )
         .join("") ||
       '<p class="panel-hint">Make a first cut to check for repeated takes. Decisions remain reversible.</p>';
-    $("overlay-list").innerHTML =
-      p.overlays
-        .map((o) => {
-          const a = library.find((a) => a.id === o.asset_id);
-          return `<article class="overlay-card" data-overlay="${o.id}"><div class="row-heading"><strong>${esc(a?.name || "Reference overlay")}</strong><button class="text-button" data-remove-overlay="${o.id}">Remove</button></div><div class="two-settings"><label>Source in<input data-overlay-field="start" value="${time(o.start)}" aria-label="Overlay start"></label><label>Source out<input data-overlay-field="end" value="${time(o.end)}" aria-label="Overlay end"></label></div><label>Placement<select data-overlay-field="layout"><option value="top" ${o.layout === "top" ? "selected" : ""}>Top card</option><option value="bottom" ${o.layout === "bottom" ? "selected" : ""}>Lower card</option><option value="full" ${o.layout === "full" ? "selected" : ""}>Full screen</option></select></label>${a?.kind === "video" ? `<label>Recording offset (seconds)<input data-overlay-field="asset_in" type="number" min="0" step="0.1" value="${o.asset_in}"></label>` : ""}<label>What does it explain?<input data-overlay-field="purpose" value="${esc(o.purpose)}" maxlength="2000"></label><label class="inline-label">Show overlay<input type="checkbox" data-overlay-field="enabled" ${o.enabled ? "checked" : ""}></label></article>`;
-        })
-        .join("") ||
-      '<p class="panel-hint">Add a library asset at the playhead. Keep references relevant to what you say.</p>';
+    $("overlay-list").innerHTML = p.overlays
+      .map((o) => {
+        const a = library.find((a) => a.id === o.asset_id),
+          audioOnly = a?.kind === "audio";
+        return `<article class="overlay-card" data-overlay="${o.id}"><div class="row-heading"><strong>${esc(a?.name || "Overlay")}</strong><button class="text-button" data-remove-overlay="${o.id}">Remove</button></div><div class="two-settings"><label>Timeline start<input data-overlay-field="start" value="${time(o.start)}" aria-label="Overlay start"></label><label>Timeline end<input data-overlay-field="end" value="${time(o.end)}" aria-label="Overlay end"></label></div>${a?.kind !== "image" ? `<label>Clip offset (seconds)<input type="number" min="0" step="0.1" data-overlay-field="asset_in" value="${o.asset_in}"></label>` : ""}${!audioOnly ? `<label>Position<select data-overlay-field="layout"><option value="top" ${o.layout === "top" ? "selected" : ""}>Top</option><option value="bottom" ${o.layout === "bottom" ? "selected" : ""}>Bottom</option><option value="full" ${o.layout === "full" ? "selected" : ""}>Full frame</option></select></label>` : ""}${a?.has_audio && !audioOnly ? `<label class="inline-label">Play clip audio<input type="checkbox" data-overlay-field="audio" ${o.audio ? "checked" : ""}></label>` : ""}${a?.has_audio && (o.audio || audioOnly) ? `<label>Audio volume<input type="range" min="0" max="1" step="0.01" data-overlay-field="volume" value="${o.volume ?? 0.4}"></label>` : ""}<label class="inline-label">${audioOnly ? "Enable audio" : "Show overlay"}<input type="checkbox" data-overlay-field="enabled" ${o.enabled ? "checked" : ""}></label></article>`;
+      })
+      .join("");
     $("punch-list").innerHTML = p.punches
       .map(
         (z) =>
-          `<div class="punch-row"><span>${time(z.start)}–${time(z.end)} · ${z.scale}×</span><button class="text-button" data-remove-punch="${z.id}">Remove</button></div>`,
+          `<article class="punch-card" data-punch="${z.id}"><div class="row-heading"><strong>Zoom ${z.scale}×</strong><button class="text-button" data-remove-punch="${z.id}">Remove</button></div><div class="two-settings"><label>Timeline start<input data-punch-field="start" value="${time(z.start)}"></label><label>Timeline end<input data-punch-field="end" value="${time(z.end)}"></label></div><label>Zoom<input type="range" min="1" max="1.3" step="0.01" value="${z.scale}" data-punch-field="scale"></label></article>`,
       )
       .join("");
     updatePreview();
@@ -171,8 +179,7 @@ export function createProduction({
           (h) =>
             `<p class="panel-hint">${esc(h.text)} · ${h.views ?? "—"} views · ${h.retention === null ? "—" : Math.round(h.retention * 100) + "%"} retention</p>`,
         )
-        .join("") ||
-      '<p class="panel-hint">No measured performance for this topic yet.</p>';
+        .join("") || '<p class="panel-hint">No recorded results.</p>';
   });
   $("hook-suggestions").onclick = (e) => {
     const b = e.target.closest("[data-hook]");
@@ -250,6 +257,9 @@ export function createProduction({
     $("asset-tags").value = a.tags.join(", ");
     $("asset-provenance").textContent = a.source_url || a.source_kind;
   }
+  $("close-asset-details").onclick = () => {
+    $("asset-metadata").hidden = true;
+  };
   $("asset-metadata").onsubmit = act(async (e) => {
     e.preventDefault();
     const id = $("asset-metadata").dataset.id;
@@ -269,10 +279,10 @@ export function createProduction({
     await loadLibrary();
     toast("Asset details saved.");
   });
-  function addAsset(a) {
+  function addAsset(a, asMusic = false) {
     const p = getProject();
     pushUndo();
-    if (a.kind === "audio") {
+    if (asMusic) {
       p.music = {
         asset_id: a.id,
         volume: 0.12,
@@ -284,7 +294,7 @@ export function createProduction({
     } else {
       const start = Math.min(video.currentTime || 0, p.media.duration - 0.02),
         length = Math.min(
-          a.kind === "video" ? a.duration : 4,
+          a.kind === "video" || a.kind === "audio" ? a.duration : 4,
           p.media.duration - start,
         );
       p.overlays.push({
@@ -293,6 +303,8 @@ export function createProduction({
         start,
         end: start + length,
         asset_in: 0,
+        audio: a.kind === "audio",
+        volume: 0.4,
         layout: "top",
         enabled: true,
         purpose: "",
@@ -300,11 +312,25 @@ export function createProduction({
     }
     change();
     render(p);
+    if (asMusic) {
+      const controls = document.querySelector(".music-tools");
+      controls.open = true;
+      controls.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    } else
+      document
+        .querySelector(`[data-overlay="${p.overlays.at(-1).id}"]`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
   $("asset-list").onclick = (e) => {
     const use = e.target.closest("[data-use-asset]"),
-      edit = e.target.closest("[data-edit-asset]");
+      edit = e.target.closest("[data-edit-asset]"),
+      music = e.target.closest("[data-use-music]");
     if (use) addAsset(library.find((a) => a.id === use.dataset.useAsset));
+    if (music)
+      addAsset(
+        library.find((a) => a.id === music.dataset.useMusic),
+        true,
+      );
     if (edit)
       openMetadata(library.find((a) => a.id === edit.dataset.editAsset));
   };
@@ -367,9 +393,6 @@ export function createProduction({
         : null;
       change();
     };
-  $("overlay-list").onfocusin = (e) => {
-    if (e.target.matches("input,select")) pushUndo();
-  };
   $("overlay-list").onchange = (e) => {
     const row = e.target.closest("[data-overlay]"),
       field = e.target.dataset.overlayField;
@@ -381,7 +404,7 @@ export function createProduction({
           ? e.target.checked
           : field === "start" || field === "end"
             ? parseTime(e.target.value)
-            : field === "asset_in"
+            : field === "asset_in" || field === "volume"
               ? Number(e.target.value)
               : e.target.value;
     if (
@@ -395,8 +418,24 @@ export function createProduction({
       render(p);
       return;
     }
+    const next = { ...o, [field]: value },
+      asset = library.find((a) => a.id === o.asset_id);
+    if (
+      (field === "asset_in" || field === "start" || field === "end") &&
+      asset &&
+      asset.kind !== "image" &&
+      (next.asset_in < 0 ||
+        next.asset_in + next.end - next.start > asset.duration + 0.05)
+    ) {
+      toast("The selected range exceeds the clip length.", true);
+      render(p);
+      return;
+    }
+    if (o[field] === value) return;
+    pushUndo();
     o[field] = value;
     change();
+    if (field === "audio") render(p);
   };
   $("overlay-list").onclick = (e) => {
     const b = e.target.closest("[data-remove-overlay]");
@@ -421,6 +460,32 @@ export function createProduction({
     change();
     render(p);
   };
+
+  $("punch-list").onchange = (e) => {
+    const row = e.target.closest("[data-punch]"),
+      field = e.target.dataset.punchField;
+    if (!row || !field) return;
+    const p = getProject(),
+      z = p.punches.find((z) => z.id === row.dataset.punch);
+    const value =
+      field === "scale" ? Number(e.target.value) : parseTime(e.target.value);
+    if (
+      !Number.isFinite(value) ||
+      (field !== "scale" &&
+        (value < 0 ||
+          value > p.media.duration ||
+          (field === "start" ? z.end - value : value - z.start) < 0.02))
+    ) {
+      toast("Use a range inside the video.", true);
+      render(p);
+      return;
+    }
+    if (z[field] === value) return;
+    pushUndo();
+    z[field] = value;
+    change();
+  };
+
   $("punch-list").onclick = (e) => {
     const b = e.target.closest("[data-remove-punch]");
     if (!b) return;
@@ -430,6 +495,7 @@ export function createProduction({
     change();
     render(p);
   };
+  const overlayAudio = new Map();
   function updatePreview() {
     const p = getProject();
     if (!p) return;
@@ -449,7 +515,15 @@ export function createProduction({
       video.pause();
     }
     const o = edited
-      ? p.overlays.filter((o) => o.enabled && o.start <= t && t < o.end).at(-1)
+      ? p.overlays
+          .filter(
+            (o) =>
+              o.enabled &&
+              o.start <= t &&
+              t < o.end &&
+              library.find((a) => a.id === o.asset_id)?.kind !== "audio",
+          )
+          .at(-1)
       : null;
     holder.hidden = !o;
     if (o) {
@@ -484,6 +558,37 @@ export function createProduction({
         image.dataset.asset = o.asset_id;
       }
     } else clip.pause();
+    const sounding = new Set();
+    if (edited && !video.paused && !video.muted)
+      for (const o of p.overlays) {
+        const a = library.find((a) => a.id === o.asset_id);
+        if (
+          !o.enabled ||
+          !o.audio ||
+          !a?.has_audio ||
+          t < o.start ||
+          t >= o.end
+        )
+          continue;
+        const key = `${p.id}/${o.id}/${o.asset_id}`;
+        sounding.add(key);
+        if (!overlayAudio.has(key))
+          overlayAudio.set(key, new Audio(`/api/assets/${o.asset_id}/media`));
+        const player = overlayAudio.get(key),
+          expected = o.asset_in + t - o.start;
+        if (
+          Number.isFinite(player.duration) &&
+          Math.abs(player.currentTime - expected) > 0.15
+        )
+          player.currentTime = Math.min(expected, player.duration);
+        player.volume = o.volume ?? 0.4;
+        player.play().catch(() => {});
+      }
+    for (const [key, player] of overlayAudio)
+      if (!sounding.has(key)) {
+        player.pause();
+        overlayAudio.delete(key);
+      }
     const audio = $("music-preview"),
       music = edited && p.music?.enabled ? p.music : null;
     if (!music || video.paused || video.muted) {
@@ -510,7 +615,7 @@ export function createProduction({
         : 1);
     audio.play().catch(() => {});
   }
-  for (const event of ["play", "pause", "seeked", "timeupdate"])
+  for (const event of ["play", "pause", "seeked", "timeupdate", "volumechange"])
     video.addEventListener(event, updatePreview);
-  return { render, updatePreview, loadLibrary };
+  return { render, updatePreview, loadLibrary, getAssets: () => library };
 }

@@ -113,7 +113,9 @@ Save with the latest `base_revision`; preserve all unrelated fields. Production 
 }
 ```
 
-Overlays and punch-ins use source times; music is continuous on the edited timeline. Video references are muted. Layouts are `top`, `bottom`, or `full`; top cards reserve space for the face, but placement still requires visual review. Use occasional 1.1× punch-ins when they add emphasis. Do not insert a change every three seconds mechanically. Music loops, fades at the ends, and can duck under the voice. Browser audio preview is approximate; encoded mixing is authoritative.
+Overlays and punch-ins use source times; music is continuous on the edited timeline. Video references are muted by default. Set an overlay's `audio` to `true` and `volume` from 0 to 1 to include its audio. Audio-only assets can also be timed overlays, for effects or additional speech, with `start`, `end`, and `asset_in` controlling their source range. Their audio follows the same cuts as the main clip. Layouts are `top`, `bottom`, or `full`; top cards reserve space for the face, but placement still requires visual review. Use occasional 1.1× punch-ins when they add emphasis. Do not insert a change every three seconds mechanically. Music loops, fades at the ends, and can duck under the voice. Browser audio preview is approximate; encoded mixing is authoritative.
+
+The browser uses a monochrome workspace with portrait and landscape previews. Its labeled source tracks show video, original audio, captions, overlays, effects, music, and added audio. Drag across the video or original-audio track to select a range, then use **Cut selection** or Delete. Existing cut edges remain draggable. Selecting a caption or added clip opens its controls. Zoom the timeline for longer recordings. Secondary project settings, caption style, downloads, and capture tools stay collapsed until needed.
 
 ```sh
 python3 scripts/editor.py export PROJECT_ID --plain --label "Story review"
