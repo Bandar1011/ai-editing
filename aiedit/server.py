@@ -595,6 +595,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 ):
                     raise ValueError("Split points must stay inside the source video.")
                 updates["split_points"] = sorted(set(edit.split_points))
+            else:
+                updates.pop("split_points", None)
             if edit.overlays is not None:
                 updates["overlays"] = [
                     overlay.model_dump() for overlay in edit.overlays

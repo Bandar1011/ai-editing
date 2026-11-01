@@ -190,6 +190,13 @@ def test_vertical_export_and_persistent_nondestructive_splits(recording, tmp_pat
         assert p["split_points"] == [1, 3]
         assert p["cuts"] == []
         assert client.get(route).json()["split_points"] == [1, 3]
+        body.update(base_revision=p["revision"], split_points=None)
+        p = client.put(route, json=body).json()
+        assert p["split_points"] == [1, 3]
+        del body["split_points"]
+        body.update(base_revision=p["revision"])
+        p = client.put(route, json=body).json()
+        assert p["split_points"] == [1, 3]
         body.update(base_revision=p["revision"], split_points=[6])
         assert client.put(route, json=body).status_code == 400
         assert (
