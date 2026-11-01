@@ -143,7 +143,7 @@ def export_video(
                     pad_color = "black@0" if kind == "image" else "0x101312"
                     asset_color = media.color_info(asset["path"])
                     conversion = (
-                        "," + media.graphics_filter(color["color_transfer"])
+                        "," + media.graphics_filter(color["color_transfer"], overlay.get("white_nits", 203))
                         if hdr and not media.is_hdr(asset_color)
                         else ""
                     )

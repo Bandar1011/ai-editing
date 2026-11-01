@@ -53,7 +53,8 @@ def wait_for(editor, identifier):
 
 
 @pytest.mark.parametrize("transfer", ["arib-std-b67", "smpte2084"])
-def test_hdr_preview_and_export_preserve_color_and_depth_without_changing_original(tmp_path, transfer):
+@pytest.mark.parametrize("white_nits", [203, 1000])
+def test_hdr_preview_and_export_preserve_color_and_depth_without_changing_original(tmp_path, transfer, white_nits):
     source = tmp_path / "hdr.mkv"
     media.run([
         media.binary("ffmpeg"), "-v", "error", "-n", "-f", "lavfi", "-i",
@@ -95,6 +96,8 @@ def test_hdr_preview_and_export_preserve_color_and_depth_without_changing_origin
                       {"id": "hdr-reference", "asset_id": hdr_asset["id"], "start": 0, "end": 1,
                        "width": 0.2, "height": 0.1, "x": 0.9, "y": 0.4}],
         )
+        if white_nits != 203:
+            body["overlays"][0]["white_nits"] = white_nits
         assert client.put(route, json=body).status_code == 200
         assert client.post(route + "/export", json={"format": "vertical"}).status_code == 200
         p = wait_for(editor, p["id"])
@@ -123,10 +126,11 @@ def test_hdr_preview_and_export_preserve_color_and_depth_without_changing_origin
             return int.from_bytes(raw[offset:offset + 2], "little")
         assert abs(luma(before, 5, 5) - luma(after, 5, 5)) <= 4
         assert abs(luma(before, 60, 77) - luma(after, 60, 77)) <= 4
-        expected_white = 721 if transfer == "arib-std-b67" else 573
+        reference_white = 721 if transfer == "arib-std-b67" else 573
+        expected_white = reference_white if white_nits == 203 else 940 if transfer == "arib-std-b67" else 723
         assert abs(luma(after, 90, 77) - expected_white) <= 8
         assert abs(luma(after, 90, 85) - expected_white) <= 8
-        assert abs(luma(after, 162, 128) - expected_white) <= 8
+        assert abs(luma(after, 162, 128) - reference_white) <= 8
     assert hashlib.sha256(source.read_bytes()).hexdigest() == original_hash
 
 

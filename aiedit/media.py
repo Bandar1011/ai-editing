@@ -126,11 +126,13 @@ def video_encoding(color: dict, *, preview=False) -> list[str]:
     ]
 
 
-def graphics_filter(transfer: str) -> str:
-    """Map SDR graphics white to 203 nits; leave HDR footage untouched."""
+def graphics_filter(transfer: str, white_nits: float = 203) -> str:
+    """Set graphics white independently of the untouched HDR footage."""
+    if not 100 <= white_nits <= 1000:
+        raise ValueError("Graphics white must be between 100 and 1000 nits.")
     return (
         "scale=out_color_matrix=bt709,format=yuva444p10le,"
-        f"zscale=pin=709:tin=709:min=709:p=2020:t={transfer}:m=2020_ncl:npl=203,"
+        f"zscale=pin=709:tin=709:min=709:p=2020:t={transfer}:m=2020_ncl:npl={white_nits},"
         "format=yuva444p10le"
     )
 

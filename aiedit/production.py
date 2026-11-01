@@ -36,6 +36,7 @@ class Overlay(Strict):
     y: float | None = Field(default=None, ge=0, le=1)
     width: float | None = Field(default=None, ge=0.01, le=1)
     height: float | None = Field(default=None, ge=0.01, le=1)
+    white_nits: float = Field(default=203, ge=100, le=1000)
     enabled: bool = True
     audio: bool = False
     volume: float = Field(default=0.4, ge=0, le=1)

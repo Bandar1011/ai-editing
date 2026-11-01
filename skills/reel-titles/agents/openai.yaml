@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reel Titles"
+  short_description: "Write and style titles for Reels Factory"
+  default_prompt: "Use $reel-titles to write a faithful Arabic opening title and match the creator’s title style."

@@ -10,7 +10,11 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "httpx>=0.28"]
+dev = [
+    "pytest>=8",
+    "httpx>=0.28",
+    "pillow>=11",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

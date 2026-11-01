@@ -37,7 +37,7 @@ def rounded_polygon(points, radius):
     return result
 
 
-def title_card(lines, output, width=2160, font="Geeza Pro", weight=400, size=196):
+def title_card(lines, output, width=2160, font="Geeza Pro", weight=400, size=240, target_width=0.74):
     if not lines or any(not line.strip() for line in lines):
         raise ValueError("Each title line must contain text.")
     if any(c in font for c in ",\n\r{}\\"):
@@ -70,12 +70,19 @@ def title_card(lines, output, width=2160, font="Geeza Pro", weight=400, size=196
                     raise ValueError("The selected font did not render the title.")
                 if bounds[0] <= 1 or bounds[2] >= source.width - 1:
                     raise ValueError("Title line exceeds the render canvas. Shorten it or lower --size.")
-                rendered.append(source.crop(bounds))
+                glyph = Image.new("RGBA", (bounds[2] - bounds[0], bounds[3] - bounds[1]))
+                # libass's RGB conversion can lift black to 16. Keep only its
+                # shaped alpha mask, then paint the letters with exact black.
+                glyph.putalpha(source.getchannel("A").crop(bounds))
+                rendered.append(glyph)
         padding = round(size * 0.37)
         available = round(width * 0.84) - 2 * padding
-        shrink = min(1, available / max(im.width for im in rendered))
-        if shrink < 1:
-            rendered = [im.resize((round(im.width * shrink), round(im.height * shrink)), Image.Resampling.LANCZOS) for im in rendered]
+        longest = max(im.width for im in rendered)
+        target = min(available, max(1, width * target_width - 2 * padding))
+        scale = min(target / longest, width * 0.13 / size)
+        rendered = [im.resize((max(1, round(im.width * scale)), max(1, round(im.height * scale))), Image.Resampling.LANCZOS) for im in rendered]
+        size = round(size * scale)
+        padding = round(size * 0.37)
         row_height = max(im.height for im in rendered) + round(size * 0.48)
         widths = [im.width + 2 * padding for im in rendered]
         card_width = max(widths)
@@ -106,6 +113,10 @@ def title_card(lines, output, width=2160, font="Geeza Pro", weight=400, size=196
         canvas.paste((255, 255, 255, 255), (0, 0), mask.resize(canvas.size, Image.Resampling.LANCZOS))
         for i, image in enumerate(rendered):
             canvas.alpha_composite(image, ((card_width - image.width) // 2, i * row_height + (row_height - image.height) // 2))
+        max_height = round(width * 16 / 9 * 0.18) // 2 * 2
+        if canvas.height > max_height:
+            fitted_width = round(canvas.width * max_height / canvas.height / 2) * 2
+            canvas = canvas.resize((fitted_width, max_height), Image.Resampling.LANCZOS)
         output.parent.mkdir(parents=True, exist_ok=True)
         canvas.save(output)
         return canvas.size
@@ -116,8 +127,11 @@ if __name__ == "__main__":
     parser.add_argument("output", type=Path)
     parser.add_argument("--line", action="append", required=True)
     parser.add_argument("--width", type=int, default=2160)
-    parser.add_argument("--size", type=int, default=196)
+    parser.add_argument("--size", type=int, default=240)
+    parser.add_argument("--target-width", type=float, default=0.74)
     parser.add_argument("--font", default="Geeza Pro")
     parser.add_argument("--weight", type=int, default=400)
     args = parser.parse_args()
-    print(title_card(args.line, args.output.resolve(), args.width, args.font, args.weight, args.size))
+    if not 0.3 <= args.target_width <= 0.9 or args.width < 180 or not 24 <= args.size <= args.width:
+        parser.error("Use width >=180, size between 24 and width, and target-width 0.3–0.9.")
+    print(title_card(args.line, args.output.resolve(), args.width, args.font, args.weight, args.size, args.target_width))
