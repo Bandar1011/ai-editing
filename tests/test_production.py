@@ -26,6 +26,26 @@ def words(text, start=0, confidence=0.9):
     ]
 
 
+def test_vad_times_are_converted_from_centiseconds_and_nonword_gaps_are_removed(tmp_path, monkeypatch):
+    model = tmp_path / "vad.bin"
+    model.write_bytes(b"mock-model")
+    monkeypatch.setattr(media, "binary", lambda name: name)
+    commands = []
+    def run(command, **kwargs):
+        commands.append(command)
+        return "Detected 3 speech segments:\nSpeech segment 0: start = 58.00, end = 389.00\nSpeech segment 1: start = 1009.00, end = 1754.00\nSpeech segment 2: start = 1779.00, end = 1837.00\n"
+    monkeypatch.setattr(media, "run", run)
+    regions = media.speech_regions(tmp_path / "speech.wav", model)
+    assert regions[0] == {"start": 0.58, "end": 3.89}
+    cuts = story.activity_gap_cuts(regions, 18.87)
+    assert [(c["start"], c["end"]) for c in cuts] == [(0, 0.58), (3.89, 10.09), (17.54, 17.79), (18.37, 18.87)]
+    assert commands[0][commands[0].index("-vp") + 1] == "25"
+    with pytest.raises(ValueError):
+        story.activity_gap_cuts([], 18.87)
+    with pytest.raises(ValueError):
+        story.activity_gap_cuts([{"start": 0, "end": 20}], 18.87)
+
+
 def test_captions_keep_language_and_strict_word_limit_without_crossing_cuts():
     source = words("Hello there. مرحبا بكم في التطبيق الجديد.", 0)
     result = story.short_captions(source, [{"start": 0.6, "end": 0.9}], 2.1)

@@ -5,8 +5,8 @@ export function movedPosition(start, dx, dy, width, height) {
 export function overlayBox(item) {
   const full = item.layout === "full";
   return {
-    width: full ? 1 : 0.88,
-    height: full ? 1 : 0.38,
+    width: item.width ?? (full ? 1 : 0.88),
+    height: item.height ?? (full ? 1 : 0.38),
     x: item.x ?? 0.5,
     y: item.y ?? (full ? 0.5 : item.layout === "bottom" ? 0.67 : 0.24),
   };

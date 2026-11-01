@@ -2,6 +2,7 @@
 
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -86,25 +87,56 @@ def probe(source: Path) -> dict:
     }
 
 
-def sdr_filter(source: Path) -> str:
-    """Convert HDR camera footage before adding SDR captions or references."""
+def color_info(source: Path) -> dict:
     raw = json.loads(run([
         binary("ffprobe"), "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=color_transfer", "-of", "json", str(source),
+        "-show_entries", "stream=color_transfer,color_primaries,color_space,pix_fmt",
+        "-of", "json", str(source),
     ], timeout=30))
-    transfer = raw["streams"][0].get("color_transfer")
-    if transfer not in ("arib-std-b67", "smpte2084"):
-        return ""
-    peak = 10 if transfer == "arib-std-b67" else 0
+    return raw["streams"][0]
+
+
+def is_hdr(color: dict) -> bool:
+    return color.get("color_transfer") in ("arib-std-b67", "smpte2084")
+
+
+def video_encoding(color: dict, *, preview=False) -> list[str]:
+    if is_hdr(color):
+        if platform.system() == "Darwin" and platform.machine() == "arm64":
+            return [
+                "-c:v", "hevc_videotoolbox", "-profile:v", "main10",
+                "-pix_fmt", "p010le", "-tag:v", "hvc1",
+                "-b:v", "4000000" if preview else "60000000",
+                "-color_primaries", color.get("color_primaries", "bt2020"),
+                "-color_trc", color["color_transfer"],
+                "-colorspace", color.get("color_space", "bt2020nc"),
+            ]
+        return [
+            "-c:v", "libx265", "-preset", "ultrafast" if preview else "fast",
+            "-crf", "23" if preview else "16", "-profile:v", "main10",
+            "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
+            "-x265-params", "pools=1:frame-threads=1:log-level=error",
+            "-color_primaries", color.get("color_primaries", "bt2020"),
+            "-color_trc", color["color_transfer"],
+            "-colorspace", color.get("color_space", "bt2020nc"),
+        ]
+    return [
+        "-c:v", "libx264", "-preset", "veryfast" if preview else "fast",
+        "-crf", "24" if preview else "16", "-pix_fmt", "yuv420p",
+    ]
+
+
+def graphics_filter(transfer: str) -> str:
+    """Map SDR graphics white to 203 nits; leave HDR footage untouched."""
     return (
-        "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
-        f"tonemap=tonemap=hable:desat=0:peak={peak},"
-        "zscale=t=bt709:m=bt709:r=tv,format=yuv420p,sidedata=mode=delete"
+        "scale=out_color_matrix=bt709,format=yuva444p10le,"
+        f"zscale=pin=709:tin=709:min=709:p=2020:t={transfer}:m=2020_ncl:npl=203,"
+        "format=yuva444p10le"
     )
 
 
 def make_proxy(source: Path, directory: Path, audio: bool) -> None:
-    tone = sdr_filter(source)
+    color = color_info(source)
     scaling = "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2"
     run(
         [
@@ -120,15 +152,8 @@ def make_proxy(source: Path, directory: Path, audio: bool) -> None:
             "-map",
             "0:a:0?",
             "-vf",
-            scaling + ("," + tone if tone else ""),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "24",
-            "-pix_fmt",
-            "yuv420p",
+            scaling,
+            *video_encoding(color, preview=True),
             "-threads",
             "2",
             "-c:a",
@@ -169,7 +194,7 @@ def detect_silence(
             str(source),
             "-vn",
             "-af",
-            f"silencedetect=noise={threshold}dB:d={minimum}",
+            f"aformat=sample_rates=16000:channel_layouts=mono,silencedetect=noise={threshold}dB:d={minimum}",
             "-f",
             "null",
             "-",
@@ -215,6 +240,34 @@ def detect_silence(
             "The whole recording was detected as quiet. Lower the threshold and try again; your existing cuts were kept."
         )
     return cuts
+
+
+def extract_speech_audio(source: Path, wav: Path) -> None:
+    wav.parent.mkdir(parents=True, exist_ok=True)
+    run([
+        binary("ffmpeg"), "-v", "error", "-y", "-i", str(source), "-vn",
+        "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav),
+    ])
+
+
+def speech_regions(wav: Path, model: Path, padding=0.025) -> list[dict]:
+    if not model.is_file():
+        raise ValueError("Install the local speech detector with scripts/setup_vad.py.")
+    output = run([
+        binary("whisper-vad-speech-segments"), "-f", str(wav), "-vm", str(model),
+        "-t", "2", "-vt", "0.55", "-vspd", "80", "-vsd", "80",
+        "-vp", str(round(padding * 1000)), "-vo", "0", "-np",
+    ], timeout=300)
+    # The standalone whisper.cpp VAD tool reports centiseconds, not seconds.
+    regions = [
+        {"start": float(a) / 100, "end": float(b) / 100}
+        for a, b in re.findall(
+            r"Speech segment \d+: start = ([\d.]+), end = ([\d.]+)", output
+        )
+    ]
+    if not regions or any(r["end"] <= r["start"] for r in regions):
+        raise ValueError("The speech detector found no usable speech. Existing cuts were kept.")
+    return regions
 
 
 def transcribe(source: Path, directory: Path, model: Path, language: str) -> list[dict]:

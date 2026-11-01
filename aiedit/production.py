@@ -34,6 +34,8 @@ class Overlay(Strict):
     layout: Literal["top", "bottom", "full"] = "top"
     x: float | None = Field(default=None, ge=0, le=1)
     y: float | None = Field(default=None, ge=0, le=1)
+    width: float | None = Field(default=None, ge=0.01, le=1)
+    height: float | None = Field(default=None, ge=0.01, le=1)
     enabled: bool = True
     audio: bool = False
     volume: float = Field(default=0.4, ge=0, le=1)
@@ -66,8 +68,8 @@ class StoryPlan(Strict):
 
 class PrepareOptions(Strict):
     language: str = Field(default="auto", pattern=r"^(auto|[a-z]{2,3})$")
-    minimum_pause: float = Field(default=0.35, ge=0.15, le=5)
-    padding: float = Field(default=0.10, ge=0.04, le=0.6)
+    minimum_pause: float = Field(default=0.12, ge=0.06, le=5)
+    padding: float = Field(default=0.025, ge=0.01, le=0.6)
     choose_retakes: bool = True
     max_words: int = Field(default=3, ge=1, le=3)
     remove_fillers: bool = True
@@ -186,12 +188,18 @@ def prepare(editor, identifier, options):
         warnings.append(
             "The amplitude threshold marked the whole clip quiet; only recognized speech gaps were used."
         )
-    gaps = story.speech_gap_cuts(
-        p["transcript"].get("cues", []),
-        duration,
-        options.minimum_pause,
-        options.padding,
-    )
+    regions = None
+    if editor.vad_model.is_file():
+        regions = media.speech_regions(
+            editor.repo.directory(identifier) / "working" / "speech.wav",
+            editor.vad_model, options.padding,
+        )
+        gaps = story.activity_gap_cuts(regions, duration, options.minimum_pause)
+    else:
+        gaps = story.speech_gap_cuts(
+            p["transcript"].get("cues", []), duration, options.minimum_pause, options.padding,
+        )
+        warnings.append("Speech detection is not installed; pause cuts use amplitude and transcript gaps.")
     fillers = story.filler_cuts(words) if options.remove_fillers else []
     candidates = (
         story.retake_candidates(
@@ -225,6 +233,7 @@ def prepare(editor, identifier, options):
             preparation=dict(options.model_dump(), max_words=max_words),
             preparation_warnings=warnings,
             analysis_cuts=merge_automatic(quiet + gaps + fillers),
+            speech_regions=regions,
         )
 
     editor.repo.change(identifier, update)

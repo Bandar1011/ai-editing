@@ -17,7 +17,7 @@ Wait for the preview job before preparing; poll `get` until the preparation job 
 - Runs the installed whisper.cpp engine with DTW alignment and flash attention disabled. The model's word boundaries are estimates to review against the audio.
 - Keeps the raw, source-timed transcript and word confidence separate from captions.
 - Groups captions into 1–3 words without crossing cut boundaries. It preserves the spoken language; uppercase styling leaves Arabic intact.
-- Detects quiet intervals and gaps between recognized utterances, retaining breathing room. Recognition gaps help when background audio masks silence. Missing/incorrect recognition can still create bad cuts; listen to every join.
+- Uses the optional local Silero detector (`uv run python scripts/setup_vad.py`) plus 16 kHz mono quiet-interval analysis. Defaults retain 25 ms around speech and remove pauses of at least 120 ms. Without that model, preparation reports its fallback to recognition gaps. Breaths can still trigger speech activity; inspect waveforms and review every join. Missing/incorrect recognition can create bad cuts.
 - Removes isolated hesitation utterances such as “um”; meaningful words such as “like” are not globally stripped.
 - Finds nearby repeated utterances and unfinished matching starts. It compares completeness, recognition confidence, filler count, and clipping. Clear exact retries can be selected automatically. Changed wording, ties, and uncertain delivery remain for the agent or user to compare.
 - Preserves manual cuts and restored sections. Existing human-caption edits require the explicit Generate action before replacement.
@@ -102,6 +102,14 @@ Simulator visuals do not establish real Screen Time enforcement, purchases, or p
 
 ## Minimal composition
 
+Use a moderately large top title for 2–3 seconds, matching the joined rounded white line backgrounds in [the user's title reference](https://www.tiktok.com/@bandar_h0/video/7661398997373930772). The selected font is Geeza Pro Regular, available on this Mac. The original published video's font metadata is unavailable; its Arabic letterforms were compared visually against installed fonts. Keep the spoken language. Generate a transparent card locally, then import it as an image overlay:
+
+```sh
+uv run scripts/title_card.py /absolute/private/path/title.png --line "First line" --line "Second line"
+```
+
+The helper shapes text with FFmpeg/libass and an installed font; `uv` supplies Pillow only for the card geometry. Its default 2160-wide composition uses 196 px text, close to the reference's relative size. Longer text shrinks to fit; lines beyond the render canvas fail explicitly so characters are never silently clipped. Use `--font`, `--size`, and `--width` for a deliberate change. Never redistribute system font files. Place the transparent asset at its native frame-relative `width`/`height`, centered near the top, without stretching. Source-time overlays must map to 2–3 seconds on the edited timeline. Use white captions with a black outline and 1–3 words per cue.
+
 Save with the latest `base_revision`; preserve all unrelated fields. Production decisions use:
 
 ```json
@@ -117,7 +125,7 @@ Overlays and punch-ins use source times; music is continuous on the edited timel
 
 The browser edits one 9:16 vertical video. A fresh clip shows only video and original audio. Captions, overlays, effects, music, and added audio each get one track only while they have content. The timeline closes removed gaps. Click a clip, position the playhead, and use **Split** (⌘B), then **Delete** to remove a piece. Drag a clip edge to trim or extend it into available source footage; double-click an edge to restore it. **Restore full video** resets trimming and splits; undo restores the prior edit. Source media and source-timed captions and overlays remain unchanged. Split seams are persisted as `split_points` on the source, separately from the removal ranges in `cuts`. Panels open only when needed; the editor has no project picker or Edited/Original switch.
 
-Browser exports pass `format: "vertical"`, producing an exact 9:16 center crop and retaining frame rate. Direct API calls default to `format: "source"` for compatibility; the CLI accepts `--format vertical`. Review the crop before exporting, especially for wide footage.
+Browser exports pass `format: "vertical"`, producing an exact 9:16 center crop and retaining source resolution and frame rate. Direct API calls default to `format: "source"` for compatibility; the CLI accepts `--format vertical`. Review the crop before exporting, especially for wide footage. Preserve HLG/PQ color transfer and 10-bit depth in HEVC; do not automatically tone-map or add punch-ins. SDR graphics use 203-nit white in HDR without grading the underlying footage. A compatible HDR player/display is needed for faithful playback.
 
 ```sh
 python3 scripts/editor.py export PROJECT_ID --format vertical --plain --label "Story review"

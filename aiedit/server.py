@@ -76,6 +76,8 @@ class SubtitleStyle(BaseModel):
     outline: float = Field(default=4, ge=0, le=8)
     margin_percent: float = Field(default=18, ge=5, le=35)
     max_words: int = Field(default=3, ge=1, le=3)
+    font_family: str = Field(default="Arial", pattern=r"^[A-Za-z0-9 ._-]{1,80}$")
+    font_weight: Literal[400, 700] = 700
 
 
 class Brief(BaseModel):
@@ -110,8 +112,8 @@ class Edit(BaseModel):
 
 class SilenceOptions(BaseModel):
     threshold_db: float = Field(default=-35, ge=-65, le=-10, allow_inf_nan=False)
-    minimum: float = Field(default=0.55, ge=0.15, le=5, allow_inf_nan=False)
-    padding: float = Field(default=0.12, ge=0, le=0.6, allow_inf_nan=False)
+    minimum: float = Field(default=0.12, ge=0.06, le=5, allow_inf_nan=False)
+    padding: float = Field(default=0.025, ge=0, le=0.6, allow_inf_nan=False)
 
 
 class TranscribeOptions(BaseModel):
@@ -229,6 +231,9 @@ class Editor:
         self.model = Path(
             os.environ.get("AIEDIT_MODEL", directory / "models" / "ggml-base.bin")
         )
+        self.vad_model = Path(
+            os.environ.get("AIEDIT_VAD_MODEL", directory / "models" / "ggml-silero-v6.2.0.bin")
+        )
         self.active: set[str] = set()
         self.job_lock = threading.Lock()
 
@@ -338,6 +343,13 @@ class Editor:
             options.padding,
         )
 
+        if self.vad_model.is_file():
+            wav = self.repo.directory(identifier) / "working" / "speech.wav"
+            if not wav.is_file():
+                media.extract_speech_audio(self.source(p), wav)
+            regions = media.speech_regions(wav, self.vad_model, options.padding)
+            cuts += story.activity_gap_cuts(regions, p["media"]["duration"], options.minimum)
+
         def update(project):
             project["analysis_cuts"] = production.merge_automatic(cuts)
             project["cuts"] = production.preserve_manual(
@@ -430,6 +442,7 @@ class Editor:
         with output.open("rb") as handle:
             checksum = hashlib.file_digest(handle, "sha256").hexdigest()
         encoded = media.probe(output)
+        encoded.update(media.color_info(output))
         result = {
             "file": output.name,
             "created_at": time.time(),

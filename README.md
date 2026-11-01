@@ -24,8 +24,8 @@ Open **http://127.0.0.1:8775**. Import a video through the browser or give Codex
 - A single-video monochrome editor with a phone-sized 9:16 preview. Only populated tracks appear below video and original audio. Split, delete, and trim linked clips directly; extend an edge to recover footage, double-click to restore it, or undo.
 - One collapsible tools panel contains Auto Edit, Media, and Captions. Select a caption or visual overlay on its timeline or directly in the preview, then drag it or use arrow keys to move it (Shift moves ten pixels). Positions persist, support undo/redo, and carry through to exports. Exported videos open in a separate dialog.
 - Same-laptop app screenshots/recordings through an owned Simulator lease and fingerprinted build reuse. Read the [capture requirements](docs/minimal-workflow.md#app-references-on-this-mac).
-- Plain and captioned H.264/AAC exports. Browser exports are 9:16 with a center crop, preserving frame rate. The API and CLI also support native aspect ratio. Captions are remapped to the edited timeline.
-- HDR camera footage is converted to BT.709 SDR for browser previews and exports before captions or overlays are composited. Uploaded originals keep their original HDR data.
+- Plain and captioned exports retain source resolution and frame rate. Browser exports use an exact 9:16 center crop; the API and CLI also support native aspect ratio. Captions are remapped to the edited timeline.
+- HLG/PQ camera footage retains its HDR transfer, BT.2020 color, and 10-bit depth in HEVC previews and exports. SDR footage uses H.264. HDR graphics white is mapped to 203 nits without grading the footage. Edited exports are re-encoded; originals remain unchanged. HDR playback requires a compatible browser and display.
 - Each version keeps its own MP4, SRT, SHA-256 checksum, edit snapshot, source ranges, brief, and asset-source manifest. Later edits do not change earlier exports.
 - Encoded-version playback and timecoded notes recording the requested change and reason. Link a correction to a later export. Search feedback across projects; one-edit notes and reusable preferences are distinct.
 - Agent CLI, local job status, recovery after interrupted jobs, and protection against overwriting concurrent browser edits.
@@ -40,13 +40,16 @@ Python 3.12+, [uv](https://docs.astral.sh/uv/), FFmpeg with libass, and [whisper
 brew install uv ffmpeg-full whisper.cpp yt-dlp
 uv sync --locked --group dev
 uv run python scripts/setup_model.py
+uv run python scripts/setup_vad.py
 uv run python scripts/doctor.py
 ./start.sh
 ```
 
 Model setup downloads the official multilingual Whisper base model and verifies its checksum. Word timing uses whisper.cpp DTW (`--dtw base -nfa -ojf`); the installed 1.9.5 CLI was exercised locally. No separate heavy alignment engine is required for the default model. `AIEDIT_MODEL` can select another compatible local model. The app prefers Homebrew's `ffmpeg-full` for caption support, then falls back to `PATH`. Linux can use distribution FFmpeg with libass and an installed whisper.cpp CLI.
 
-Optional environment variables: `AIEDIT_PORT` (default `8775`), `AIEDIT_DATA` (default `.aiedit/`), `AIEDIT_MODEL`, `AIEDIT_DTW_MODEL` (matching alignment preset for custom models), and `AIEDIT_URL` for the agent client. The server always binds to `127.0.0.1`. Local API documentation is at `/docs`.
+The optional, checksum-verified Silero detector finds speech activity locally. With it installed, cuts combine speech activity with mono quiet-interval analysis, using 25 ms shoulders and a 120 ms minimum pause. Without it, the editor reports the fallback to recognition gaps. Neither detector establishes whether a sound is a word; review the joins.
+
+Optional environment variables: `AIEDIT_PORT` (default `8775`), `AIEDIT_DATA` (default `.aiedit/`), `AIEDIT_MODEL`, `AIEDIT_DTW_MODEL` (matching alignment preset for custom models), `AIEDIT_VAD_MODEL`, and `AIEDIT_URL` for the agent client. The server always binds to `127.0.0.1`. Local API documentation is at `/docs`.
 
 ## Direct from chat or terminal
 
@@ -55,7 +58,7 @@ python3 scripts/editor.py import /absolute/path/clip.mp4
 python3 scripts/editor.py get PROJECT_ID
 python3 scripts/editor.py prepare PROJECT_ID --language auto --max-words 3
 python3 scripts/editor.py transcribe PROJECT_ID --language auto
-python3 scripts/editor.py silence PROJECT_ID --minimum 0.55 --padding 0.12
+python3 scripts/editor.py silence PROJECT_ID --minimum 0.12 --padding 0.025
 python3 scripts/editor.py export PROJECT_ID --plain --label "Story review"
 python3 scripts/editor.py export PROJECT_ID --label "Caption review"
 python3 scripts/editor.py history "caption placement" --reusable

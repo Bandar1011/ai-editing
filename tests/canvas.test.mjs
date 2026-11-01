@@ -34,3 +34,9 @@ test("existing overlay presets keep their positions until moved", () => {
     y: 0.7,
   });
 });
+
+test("a compact title card uses its own size without covering the frame", () => {
+  assert.deepEqual(overlayBox({layout: "full", width: .68, height: .125, x: .5, y: .12}), {
+    width: .68, height: .125, x: .5, y: .12,
+  });
+});

@@ -130,6 +130,12 @@ def ass_text(cues: list[dict], width: int, height: int, style: dict) -> str:
     horizontal_margin = round(width * 0.06)
     alignment = 8 if style["position"] == "top" else 2
     outline = round(style.get("outline", 2) * height / 1080, 2)
+    font_family = style.get("font_family", "Arial")
+    bold = -1 if style.get("font_weight", 700) >= 700 else 0
+    white = (
+        "&H00949494" if style.get("hdr") == "smpte2084"
+        else "&H00BFBFBF" if style.get("hdr") else "&H00FFFFFF"
+    )
     result = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -140,7 +146,7 @@ def ass_text(cues: list[dict], width: int, height: int, style: dict) -> str:
         "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Default,Arial,{size},&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,{outline},0,{alignment},{horizontal_margin},{horizontal_margin},{margin},1",
+        f"Style: Default,{font_family},{size},{white},{white},&H00000000,&H80000000,{bold},0,0,0,100,100,0,0,1,{outline},0,{alignment},{horizontal_margin},{horizontal_margin},{margin},1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",

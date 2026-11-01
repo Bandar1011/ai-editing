@@ -1,5 +1,6 @@
 import hashlib
 import json
+import subprocess
 import time
 
 import pytest
@@ -52,11 +53,11 @@ def wait_for(editor, identifier):
 
 
 @pytest.mark.parametrize("transfer", ["arib-std-b67", "smpte2084"])
-def test_hdr_preview_and_export_use_sdr_color_without_changing_original(tmp_path, transfer):
+def test_hdr_preview_and_export_preserve_color_and_depth_without_changing_original(tmp_path, transfer):
     source = tmp_path / "hdr.mkv"
     media.run([
         media.binary("ffmpeg"), "-v", "error", "-n", "-f", "lavfi", "-i",
-        "testsrc2=size=180x320:rate=30:duration=1",
+        "color=c=0x555555:size=180x320:rate=30:duration=1",
         "-vf", f"setparams=color_primaries=bt2020:color_trc={transfer}:colorspace=bt2020nc",
         "-c:v", "libx264",
         "-preset", "ultrafast", "-threads", "2",
@@ -68,6 +69,33 @@ def test_hdr_preview_and_export_use_sdr_color_without_changing_original(tmp_path
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(source, source.name)["id"])
         route = f"/api/projects/{p['id']}"
+        image = tmp_path / "white.png"
+        media.run([
+            media.binary("ffmpeg"), "-v", "error", "-f", "lavfi", "-i",
+            "color=black@0:s=40x20,format=rgba,drawbox=x=8:y=4:w=24:h=12:color=white:t=fill:replace=1",
+            "-frames:v", "1", "-threads", "1", str(image),
+        ])
+        asset = editor.library.import_file(image)
+        other_transfer = "smpte2084" if transfer == "arib-std-b67" else "arib-std-b67"
+        hdr_asset_path = tmp_path / "other-hdr.mkv"
+        media.run([
+            media.binary("ffmpeg"), "-v", "error", "-f", "lavfi", "-i",
+            "color=white:s=40x20:r=30:d=1", "-vf", media.graphics_filter(other_transfer),
+            "-c:v", "libx264", "-preset", "ultrafast", "-threads", "2",
+            "-pix_fmt", "yuv420p10le", "-color_primaries", "bt2020",
+            "-color_trc", other_transfer, "-colorspace", "bt2020nc", str(hdr_asset_path),
+        ])
+        hdr_asset = editor.library.import_file(hdr_asset_path)
+        body = {k: p[k] for k in ("name", "cuts", "subtitles", "subtitle_style", "brief", "references")}
+        body.update(
+            base_revision=p["revision"],
+            subtitles=[{"id": "caption", "start": 0, "end": 1, "text": "HDR", "x": 0.5, "y": 0.7}],
+            overlays=[{"id": "title", "asset_id": asset["id"], "start": 0, "end": 1,
+                       "width": 0.4, "height": 0.1, "x": 0.5},
+                      {"id": "hdr-reference", "asset_id": hdr_asset["id"], "start": 0, "end": 1,
+                       "width": 0.2, "height": 0.1, "x": 0.9, "y": 0.4}],
+        )
+        assert client.put(route, json=body).status_code == 200
         assert client.post(route + "/export", json={"format": "vertical"}).status_code == 200
         p = wait_for(editor, p["id"])
         folder = editor.repo.directory(p["id"])
@@ -76,12 +104,29 @@ def test_hdr_preview_and_export_use_sdr_color_without_changing_original(tmp_path
                 media.binary("ffprobe"), "-v", "error", "-select_streams", "v:0",
                 "-show_streams", "-of", "json", str(output),
             ]))["streams"][0]
-            assert stream["color_transfer"] == "bt709"
-            assert stream["color_primaries"] == "bt709"
-            assert stream["color_space"] == "bt709"
-            assert stream["pix_fmt"] == "yuv420p"
+            assert stream["color_transfer"] == transfer
+            assert stream["color_primaries"] == "bt2020"
+            assert stream["color_space"] == "bt2020nc"
+            assert stream["pix_fmt"] == "yuv420p10le"
+            assert stream["codec_name"] == "hevc"
+            assert stream["codec_tag_string"] == "hvc1"
             media.run([media.binary("ffmpeg"), "-v", "error", "-i", str(output), "-f", "null", "-"])
         assert hashlib.sha256((folder / p["source_file"]).read_bytes()).hexdigest() == original_hash
+        def frame(path):
+            return subprocess.run([
+                media.binary("ffmpeg"), "-v", "error", "-ss", "0.5", "-i", str(path),
+                "-frames:v", "1", "-pix_fmt", "yuv420p10le", "-f", "rawvideo", "-",
+            ], capture_output=True, check=True).stdout
+        before, after = frame(source), frame(folder / "exports" / p["exports"][-1]["file"])
+        def luma(raw, x, y):
+            offset = (y * 180 + x) * 2
+            return int.from_bytes(raw[offset:offset + 2], "little")
+        assert abs(luma(before, 5, 5) - luma(after, 5, 5)) <= 4
+        assert abs(luma(before, 60, 77) - luma(after, 60, 77)) <= 4
+        expected_white = 721 if transfer == "arib-std-b67" else 573
+        assert abs(luma(after, 90, 77) - expected_white) <= 8
+        assert abs(luma(after, 90, 85) - expected_white) <= 8
+        assert abs(luma(after, 162, 128) - expected_white) <= 8
     assert hashlib.sha256(source.read_bytes()).hexdigest() == original_hash
 
 

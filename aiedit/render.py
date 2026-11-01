@@ -47,8 +47,13 @@ def export_video(
     )
     if format == "vertical":
         # Exact 9:16 dimensions, without upscaling small sources.
-        units = max(1, min(width // 18, height // 32, 60))
+        units = max(1, min(width // 18, height // 32))
         width, height = 18 * units, 32 * units
+    color = media.color_info(source)
+    hdr = media.is_hdr(color)
+    # Keep alpha composition in 4:4:4. The 10-bit 4:2:0 overlay path can
+    # clip a transparent card's lower rows; subsample only at the encoder.
+    overlay_format = "yuv444p10" if hdr else "yuv420"
     total = sum(b - a for a, b in kept)
     filters, concat = [], []
     inputs = ["-i", str(source.resolve())]
@@ -73,8 +78,7 @@ def export_video(
         if format == "vertical"
         else f"scale={width}:{height},setsar=1"
     )
-    tone = media.sdr_filter(source)
-    filters.append(f"[vcat]{scaling}" + ("," + tone if tone else "") + "[base]")
+    filters.append(f"[vcat]{scaling}[base]")
     current, count = "base", 0
     overlay_audio = []
     base_audio = "voice" if audio else None
@@ -94,7 +98,7 @@ def export_video(
                 [
                     f"[{current}]split=2[zb{count}][zc{count}]",
                     f"[zc{count}]crop=trunc(iw/{z}/2)*2:trunc(ih/{z}/2)*2,scale={width}:{height}[zoom{count}]",
-                    f"[zb{count}][zoom{count}]overlay=0:0:enable='{enable}'[p{count}]",
+                    f"[zb{count}][zoom{count}]overlay=0:0:format={overlay_format}:enable='{enable}'[p{count}]",
                 ]
             )
             current = f"p{count}"
@@ -122,23 +126,44 @@ def export_video(
                 box_h = (
                     height if layout == "full" else max(2, int(height * 0.38) // 2 * 2)
                 )
+                if overlay.get("width") is not None:
+                    box_w = max(2, round(width * overlay["width"] / 2) * 2)
+                if overlay.get("height") is not None:
+                    box_h = max(2, round(height * overlay["height"] / 2) * 2)
                 x = (width - box_w) // 2
-                y = (
-                    0
-                    if layout == "full"
-                    else int(height * 0.05) if layout == "top" else int(height * 0.48)
-                )
+                center_y = 0.5 if layout == "full" else 0.24 if layout == "top" else 0.67
+                y = round(height * center_y - box_h / 2)
                 if overlay.get("x") is not None:
                     x = round(width * overlay["x"] - box_w / 2)
                 if overlay.get("y") is not None:
                     y = round(height * overlay["y"] - box_h / 2)
                 length = span["end"] - span["start"]
                 if kind != "audio":
+                    image_format = "format=rgba," if kind == "image" else ""
+                    pad_color = "black@0" if kind == "image" else "0x101312"
+                    asset_color = media.color_info(asset["path"])
+                    conversion = (
+                        "," + media.graphics_filter(color["color_transfer"])
+                        if hdr and not media.is_hdr(asset_color)
+                        else ""
+                    )
+                    if hdr and media.is_hdr(asset_color) and any(
+                        asset_color.get(key) != color.get(key)
+                        for key in ("color_transfer", "color_primaries", "color_space")
+                    ):
+                        primaries = {"bt2020": "2020", "bt709": "709"}
+                        matrices = {"bt2020nc": "2020_ncl", "bt709": "709"}
+                        conversion = (
+                            f",zscale=t={color['color_transfer']}"
+                            f":p={primaries[color.get('color_primaries', 'bt2020')]}"
+                            f":m={matrices[color.get('color_space', 'bt2020nc')]}"
+                            ",format=yuva444p10le"
+                        )
                     filters.append(
-                        f"[{input_index}:v:0]trim=duration={length:.6f},setpts=PTS-STARTPTS+{span['start']:.6f}/TB,scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x101312,setsar=1[asset{count}]"
+                        f"[{input_index}:v:0]trim=duration={length:.6f},setpts=PTS-STARTPTS+{span['start']:.6f}/TB,{image_format}scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color={pad_color},setsar=1{conversion}[asset{count}]"
                     )
                     filters.append(
-                        f"[{current}][asset{count}]overlay=x={x}:y={y}:eof_action=pass:repeatlast=0:enable='gte(t,{span['start']:.6f})*lt(t,{span['end']:.6f})'[o{count}]"
+                        f"[{current}][asset{count}]overlay=x={x}:y={y}:format={overlay_format}:alpha=straight:eof_action=pass:repeatlast=0:enable='gte(t,{span['start']:.6f})*lt(t,{span['end']:.6f})'[o{count}]"
                     )
                     current = f"o{count}"
                 if overlay.get("audio") and asset["metadata"]["has_audio"]:
@@ -150,6 +175,13 @@ def export_video(
                     overlay_audio.append(label)
                 input_index += 1
         if overlay_audio:
+            if base_audio is None:
+                # A finite silent bed keeps the output clock running before and
+                # after an add-on, even when a video add-on reaches EOF first.
+                filters.append(
+                    f"anullsrc=r=48000:cl=stereo,atrim=duration={total:.6f}[silentbed]"
+                )
+                base_audio = "silentbed"
             labels = ([base_audio] if base_audio else []) + overlay_audio
             mixing = (
                 f"amix=inputs={len(labels)}:duration=longest:normalize=0"
@@ -193,7 +225,7 @@ def export_video(
     if burn_subtitles and not plain and cues:
         caption_path = output.with_suffix(".ass")
         caption_path.write_text(
-            ass_text(cues, width, height, project["subtitle_style"]), encoding="utf-8"
+            ass_text(cues, width, height, dict(project["subtitle_style"], hdr=color.get("color_transfer") if hdr else False)), encoding="utf-8"
         )
         filters.append(f"[{current}]ass=filename={caption_path.name}[vout]")
     else:
@@ -217,14 +249,7 @@ def export_video(
     command += [
         "-t",
         f"{total:.6f}",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
+        *media.video_encoding(color),
         "-r",
         str(project["media"]["fps"]),
         "-fps_mode",

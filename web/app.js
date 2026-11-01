@@ -1,4 +1,4 @@
-import { createCanvas } from "./canvas.mjs?v=factory-3";
+import { createCanvas } from "./canvas.mjs?v=factory-4";
 import {
   keptRanges,
   clipsFor,
@@ -7,8 +7,8 @@ import {
   trimClip,
   mappedSpans,
   lanesFor,
-} from "./timeline.mjs?v=factory-3";
-import { createProduction } from "./production.js?v=factory-3";
+} from "./timeline.mjs?v=factory-4";
+import { createProduction } from "./production.js?v=factory-4";
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s ?? "").replace(
@@ -673,6 +673,8 @@ function updateCaption() {
     node.setAttribute("aria-label", `Caption: ${cue.text}`);
     node.style.webkitTextStroke = `${(style.outline * stage.clientHeight) / 1080}px #101010`;
     node.style.fontSize = `${(style.font_size * stage.clientHeight) / 1080}px`;
+    node.style.fontFamily = `${JSON.stringify(style.font_family || "Arial")}, Arial, sans-serif`;
+    node.style.fontWeight = style.font_weight || 700;
     if (cue.x != null && cue.y != null) {
       node.style.left = `${cue.x * 100}%`;
       node.style.top = `${cue.y * 100}%`;

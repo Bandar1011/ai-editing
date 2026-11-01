@@ -1,4 +1,4 @@
-import { overlayBox } from "./canvas.mjs?v=factory-3";
+import { overlayBox } from "./canvas.mjs?v=factory-4";
 export function createProduction({
   getProject,
   applyProject,
@@ -504,6 +504,7 @@ export function createProduction({
         node.className = "canvas-overlay";
         node.dataset.canvasOverlay = o.id;
         node.dataset.asset = o.asset_id;
+        node.dataset.kind = a.kind;
         node.setAttribute("role", "button");
         node.tabIndex = 0;
         const content = document.createElement(

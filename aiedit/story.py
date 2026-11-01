@@ -6,7 +6,7 @@ import unicodedata
 import uuid
 from difflib import SequenceMatcher
 
-from .timeline import kept_ranges
+from .timeline import kept_ranges, validate_intervals
 
 INCOMPLETE_ENDINGS = {
     "i",
@@ -327,6 +327,17 @@ def speech_gap_cuts(cues, duration, minimum=0.35, padding=0.10):
     return [
         {"id": identifier(), "start": a, "end": b, "enabled": True, "kind": "speech"}
         for a, b in kept_ranges(duration, speech)
+        if b - a >= minimum
+    ]
+
+
+def activity_gap_cuts(regions, duration, minimum=0.12):
+    if not regions:
+        raise ValueError("Speech detection returned no regions; keep the existing cut.")
+    validate_intervals(regions, duration)
+    return [
+        {"id": identifier(), "start": a, "end": b, "enabled": True, "kind": "speech"}
+        for a, b in kept_ranges(duration, regions)
         if b - a >= minimum
     ]
 

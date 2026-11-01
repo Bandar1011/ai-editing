@@ -1646,6 +1646,9 @@ dialog p {
   object-fit: contain;
   pointer-events: none;
 }
+.canvas-overlay[data-kind="image"] {
+  background: transparent;
+}
 .caption-overlay {
   inset: 0;
   width: 100%;
