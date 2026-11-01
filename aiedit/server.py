@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -102,6 +103,7 @@ class Edit(BaseModel):
     punches: list[production.Punch] | None = Field(default=None, max_length=30)
     music: production.Music | None = None
     story: production.StoryPlan | None = None
+    split_points: list[float] | None = Field(default=None, max_length=5000)
 
 
 class SilenceOptions(BaseModel):
@@ -118,6 +120,7 @@ class ExportOptions(BaseModel):
     burn_subtitles: bool = True
     label: str = Field(default="", max_length=120)
     plain: bool = False
+    format: Literal["source", "vertical"] = "source"
 
 
 class ReviewNote(BaseModel):
@@ -162,6 +165,7 @@ class Repository:
                     (self.directory(identifier) / "project.json").read_text()
                 )
                 for key, value in {
+                    "split_points": [],
                     "overlays": [],
                     "punches": [],
                     "music": None,
@@ -375,12 +379,14 @@ class Editor:
                     "Captions changed during transcription. Your edits were preserved; the new transcript is saved in working/transcript.json."
                 )
             project.update(
-                subtitles=story.short_captions(
-                    transcript["words"],
-                    max_words=project["subtitle_style"]["max_words"],
-                )
-                if transcript.get("words")
-                else cues,
+                subtitles=(
+                    story.short_captions(
+                        transcript["words"],
+                        max_words=project["subtitle_style"]["max_words"],
+                    )
+                    if transcript.get("words")
+                    else cues
+                ),
                 transcript=transcript,
                 captions_authored=False,
             )
@@ -395,6 +401,7 @@ class Editor:
         label: str = "",
         plain: bool = False,
         resolved_assets=None,
+        format="source",
     ):
         resolved_assets = (
             resolved_assets
@@ -408,6 +415,7 @@ class Editor:
             burn_subtitles and snapshot["subtitle_style"]["enabled"],
             resolved_assets,
             plain,
+            format,
         )
         kept = kept_ranges(snapshot["media"]["duration"], snapshot["cuts"])
         version = len(snapshot["exports"]) + 1
@@ -441,6 +449,7 @@ class Editor:
                     "punches",
                     "music",
                     "story",
+                    "split_points",
                 )
             },
             "source_ranges": [{"start": a, "end": b} for a, b in kept],
@@ -452,10 +461,16 @@ class Editor:
             "sha256": checksum,
             "captions_file": output.with_suffix(".srt").name,
             "manifest_file": output.with_suffix(".json").name,
-            "render_settings": {"plain": plain, "burn_subtitles": captioned},
-            "assets": [item["metadata"] for item in resolved_assets.values()]
-            if not plain
-            else [],
+            "render_settings": {
+                "plain": plain,
+                "burn_subtitles": captioned,
+                "format": format,
+            },
+            "assets": (
+                [item["metadata"] for item in resolved_assets.values()]
+                if not plain
+                else []
+            ),
             "retakes": snapshot.get("retakes", []),
         }
         output.with_suffix(".srt").write_text(
@@ -573,8 +588,19 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                     409, "This project changed elsewhere. Refresh before saving."
                 )
             updates = edit.model_dump(exclude={"base_revision"}, exclude_unset=True)
+            if edit.split_points is not None:
+                if any(
+                    not math.isfinite(t) or not 0 < t < p["media"]["duration"]
+                    for t in edit.split_points
+                ):
+                    raise ValueError("Split points must stay inside the source video.")
+                updates["split_points"] = sorted(set(edit.split_points))
+            else:
+                updates.pop("split_points", None)
             if edit.overlays is not None:
-                updates["overlays"] = [overlay.model_dump() for overlay in edit.overlays]
+                updates["overlays"] = [
+                    overlay.model_dump() for overlay in edit.overlays
+                ]
             for key in ("cuts", "subtitles"):
                 validate_intervals(updates[key], p["media"]["duration"])
                 if len({c["id"] for c in updates[key]}) != len(updates[key]):
@@ -695,6 +721,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             options.label,
             options.plain,
             editor.library.resolve(p) if not options.plain else {},
+            options.format,
         )
 
     @app.get("/api/projects/{identifier}/exports/{filename}")

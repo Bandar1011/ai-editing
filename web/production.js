@@ -121,13 +121,13 @@ export function createProduction({
       .map((o) => {
         const a = library.find((a) => a.id === o.asset_id),
           audioOnly = a?.kind === "audio";
-        return `<article class="overlay-card" data-overlay="${o.id}"><div class="row-heading"><strong>${esc(a?.name || "Overlay")}</strong><button class="text-button" data-remove-overlay="${o.id}">Remove</button></div><div class="two-settings"><label>Timeline start<input data-overlay-field="start" value="${time(o.start)}" aria-label="Overlay start"></label><label>Timeline end<input data-overlay-field="end" value="${time(o.end)}" aria-label="Overlay end"></label></div>${a?.kind !== "image" ? `<label>Clip offset (seconds)<input type="number" min="0" step="0.1" data-overlay-field="asset_in" value="${o.asset_in}"></label>` : ""}${!audioOnly ? `<label>Position<select data-overlay-field="layout"><option value="top" ${o.layout === "top" ? "selected" : ""}>Top</option><option value="bottom" ${o.layout === "bottom" ? "selected" : ""}>Bottom</option><option value="full" ${o.layout === "full" ? "selected" : ""}>Full frame</option></select></label>` : ""}${a?.has_audio && !audioOnly ? `<label class="inline-label">Play clip audio<input type="checkbox" data-overlay-field="audio" ${o.audio ? "checked" : ""}></label>` : ""}${a?.has_audio && (o.audio || audioOnly) ? `<label>Audio volume<input type="range" min="0" max="1" step="0.01" data-overlay-field="volume" value="${o.volume ?? 0.4}"></label>` : ""}<label class="inline-label">${audioOnly ? "Enable audio" : "Show overlay"}<input type="checkbox" data-overlay-field="enabled" ${o.enabled ? "checked" : ""}></label></article>`;
+        return `<article class="overlay-card" data-overlay="${o.id}"><div class="row-heading"><strong>${esc(a?.name || "Overlay")}</strong><button class="text-button" data-remove-overlay="${o.id}">Remove</button></div><div class="two-settings"><label>Source start<input data-overlay-field="start" value="${time(o.start)}" aria-label="Overlay start"></label><label>Source end<input data-overlay-field="end" value="${time(o.end)}" aria-label="Overlay end"></label></div>${a?.kind !== "image" ? `<label>Clip offset (seconds)<input type="number" min="0" step="0.1" data-overlay-field="asset_in" value="${o.asset_in}"></label>` : ""}${!audioOnly ? `<label>Position<select data-overlay-field="layout"><option value="top" ${o.layout === "top" ? "selected" : ""}>Top</option><option value="bottom" ${o.layout === "bottom" ? "selected" : ""}>Bottom</option><option value="full" ${o.layout === "full" ? "selected" : ""}>Full frame</option></select></label>` : ""}${a?.has_audio && !audioOnly ? `<label class="inline-label">Play clip audio<input type="checkbox" data-overlay-field="audio" ${o.audio ? "checked" : ""}></label>` : ""}${a?.has_audio && (o.audio || audioOnly) ? `<label>Audio volume<input type="range" min="0" max="1" step="0.01" data-overlay-field="volume" value="${o.volume ?? 0.4}"></label>` : ""}<label class="inline-label">${audioOnly ? "Enable audio" : "Show overlay"}<input type="checkbox" data-overlay-field="enabled" ${o.enabled ? "checked" : ""}></label></article>`;
       })
       .join("");
     $("punch-list").innerHTML = p.punches
       .map(
         (z) =>
-          `<article class="punch-card" data-punch="${z.id}"><div class="row-heading"><strong>Zoom ${z.scale}×</strong><button class="text-button" data-remove-punch="${z.id}">Remove</button></div><div class="two-settings"><label>Timeline start<input data-punch-field="start" value="${time(z.start)}"></label><label>Timeline end<input data-punch-field="end" value="${time(z.end)}"></label></div><label>Zoom<input type="range" min="1" max="1.3" step="0.01" value="${z.scale}" data-punch-field="scale"></label></article>`,
+          `<article class="punch-card" data-punch="${z.id}"><div class="row-heading"><strong>Zoom ${z.scale}×</strong><button class="text-button" data-remove-punch="${z.id}">Remove</button></div><div class="two-settings"><label>Source start<input data-punch-field="start" value="${time(z.start)}"></label><label>Source end<input data-punch-field="end" value="${time(z.end)}"></label></div><label>Zoom<input type="range" min="1" max="1.3" step="0.01" value="${z.scale}" data-punch-field="scale"></label></article>`,
       )
       .join("");
     updatePreview();
@@ -528,7 +528,7 @@ export function createProduction({
     holder.hidden = !o;
     if (o) {
       const a = library.find((a) => a.id === o.asset_id),
-        ratio = p.media.width / p.media.height,
+        ratio = 9 / 16,
         h = Math.min(stage.clientHeight, stage.clientWidth / ratio),
         w = Math.min(stage.clientWidth, stage.clientHeight * ratio),
         full = o.layout === "full";

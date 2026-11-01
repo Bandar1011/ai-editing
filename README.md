@@ -21,14 +21,14 @@ Open **http://127.0.0.1:8775**. Import a video through the browser or give Codex
 - A project brief, original hook patterns, user-supplied performance history, and CTA planning.
 - A searchable local asset/mood library, deduplicated inbox import, and bounded yt-dlp media downloads.
 - Timed real screenshot/B-roll overlays, audio clips, optional punch-ins, and looping music with voice-priority ducking. Video-overlay audio is optional and has its own gain.
-- A monochrome editor with a phone-sized 9:16 portrait preview, native landscape previews, and labeled source tracks for video, original audio, captions, overlays, effects, music, and added audio. Drag to select a source range, cut it, restore it, or undo. Timeline clips open their controls; timeline zoom supports precise work on longer clips.
+- A single-video monochrome editor with a phone-sized 9:16 preview. Only populated tracks appear below video and original audio. Split, delete, and trim linked clips directly; extend an edge to recover footage, double-click to restore it, or undo. Captions and media controls open on demand.
 - Same-laptop app screenshots/recordings through an owned Simulator lease and fingerprinted build reuse. Read the [capture requirements](docs/minimal-workflow.md#app-references-on-this-mac).
-- Plain and captioned H.264/AAC exports, preserving native aspect ratio and frame rate. Captions are remapped to the edited timeline.
+- Plain and captioned H.264/AAC exports. Browser exports are 9:16 with a center crop, preserving frame rate. The API and CLI also support native aspect ratio. Captions are remapped to the edited timeline.
 - Each version keeps its own MP4, SRT, SHA-256 checksum, edit snapshot, source ranges, brief, and asset-source manifest. Later edits do not change earlier exports.
 - Encoded-version playback and timecoded notes recording the requested change and reason. Link a correction to a later export. Search feedback across projects; one-edit notes and reusable preferences are distinct.
 - Agent CLI, local job status, recovery after interrupted jobs, and protection against overwriting concurrent browser edits.
 
-Each project has one main talking-head clip plus image/video references and music. Target duration/format fields describe the brief; they do not automatically crop or shorten footage. Generative B-roll, presenter matting, and elaborate motion graphics are outside this minimal workflow. Recognition and retake scores need review, especially names, changed wording, intentional repetition, and noisy speech. Browser captions and mixing are approximate; the encoded candidate is authoritative.
+Each project has one main talking-head clip plus image/video references and music. Target duration/format brief fields describe intent; the browser explicitly requests vertical exports. The original footage stays intact. Generative B-roll, presenter matting, and elaborate motion graphics are outside this minimal workflow. Recognition and retake scores need review, especially names, changed wording, intentional repetition, and noisy speech. Browser captions and mixing are approximate; the encoded candidate is authoritative.
 
 ## Fresh installation
 
