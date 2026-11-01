@@ -80,7 +80,7 @@ web/                Browser editor; no frontend build step
 scripts/            Agent client, doctor, model setup, generated demo
 templates/brief.md  Starting brief for a real clip
 docs/workflow.md    Editing process and tool selection
-.aiedit/            Local-only data, ignored by Git
+.aiedit/            Local storage; only README and an empty placeholder are tracked
   models/
   library/          Private assets, mood tags, and hook performance
   capture-settings.json  Machine-specific app capture target
@@ -93,7 +93,9 @@ docs/workflow.md    Editing process and tool selection
     project.json    Current decisions, brief, references, reviews
 ```
 
-The top-level `footage/`, `references/`, `working/`, and `exports/` folders are optional local staging areas and ignored by Git. Media, transcripts, models, and review notes are never part of the code repository. Back up `.aiedit/` separately to retain projects. There are no cloud inference calls, external API keys, or automatic publishing. Remembering feedback stores local history; it does not train a model or automatically apply preferences.
+Uploads are saved to `.aiedit/projects/<id>/source/`; edited versions are saved to that project's `exports/` folder. The [storage folder](.aiedit/README.md) appears on GitHub through its README and an empty `projects/.gitkeep` placeholder. Its actual contents stay ignored, including every project's videos, captions, transcripts, snapshots, and feedback.
+
+The top-level `footage/`, `references/`, `working/`, and `exports/` folders are optional local staging areas; only their empty placeholders are tracked. Media, transcripts, models, and review notes are never part of the code repository. Back up `.aiedit/` separately to retain projects. There are no cloud inference calls, external API keys, or automatic publishing. Remembering feedback stores local history; it does not train a model or automatically apply preferences.
 
 ## Verify
 
