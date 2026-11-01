@@ -68,11 +68,13 @@ def export_video(
         + f"concat=n={len(kept)}:v=1:a={int(audio)}[vcat]"
         + ("[voice]" if audio else "")
     )
-    filters.append(
-        f"[vcat]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1[base]"
+    scaling = (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1"
         if format == "vertical"
-        else f"[vcat]scale={width}:{height},setsar=1[base]"
+        else f"scale={width}:{height},setsar=1"
     )
+    tone = media.sdr_filter(source)
+    filters.append(f"[vcat]{scaling}" + ("," + tone if tone else "") + "[base]")
     current, count = "base", 0
     overlay_audio = []
     base_audio = "voice" if audio else None

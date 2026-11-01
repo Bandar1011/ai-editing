@@ -1,4 +1,5 @@
 import hashlib
+import json
 import time
 
 import pytest
@@ -48,6 +49,40 @@ def wait_for(editor, identifier):
     p = editor.repo.load(identifier)
     assert all(j["status"] == "done" for j in p["jobs"].values()), p["jobs"]
     return p
+
+
+@pytest.mark.parametrize("transfer", ["arib-std-b67", "smpte2084"])
+def test_hdr_preview_and_export_use_sdr_color_without_changing_original(tmp_path, transfer):
+    source = tmp_path / "hdr.mkv"
+    media.run([
+        media.binary("ffmpeg"), "-v", "error", "-n", "-f", "lavfi", "-i",
+        "testsrc2=size=180x320:rate=30:duration=1",
+        "-vf", f"setparams=color_primaries=bt2020:color_trc={transfer}:colorspace=bt2020nc",
+        "-c:v", "libx264",
+        "-preset", "ultrafast", "-threads", "2",
+        "-pix_fmt", "yuv420p10le", "-color_primaries", "bt2020",
+        "-color_trc", transfer, "-colorspace", "bt2020nc", str(source),
+    ])
+    original_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    with TestClient(create_app(tmp_path / "data"), base_url="http://127.0.0.1") as client:
+        editor = client.app.state.editor
+        p = wait_for(editor, editor.create(source, source.name)["id"])
+        route = f"/api/projects/{p['id']}"
+        assert client.post(route + "/export", json={"format": "vertical"}).status_code == 200
+        p = wait_for(editor, p["id"])
+        folder = editor.repo.directory(p["id"])
+        for output in (folder / "working/preview.mp4", folder / "exports" / p["exports"][-1]["file"]):
+            stream = json.loads(media.run([
+                media.binary("ffprobe"), "-v", "error", "-select_streams", "v:0",
+                "-show_streams", "-of", "json", str(output),
+            ]))["streams"][0]
+            assert stream["color_transfer"] == "bt709"
+            assert stream["color_primaries"] == "bt709"
+            assert stream["color_space"] == "bt709"
+            assert stream["pix_fmt"] == "yuv420p"
+            media.run([media.binary("ffmpeg"), "-v", "error", "-i", str(output), "-f", "null", "-"])
+        assert hashlib.sha256((folder / p["source_file"]).read_bytes()).hexdigest() == original_hash
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == original_hash
 
 
 def test_real_silence_detection_and_captioned_export(recording, tmp_path):
