@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 .venv/
+.aiedit/
+!/.aiedit/
 /.aiedit/*
 !/.aiedit/README.md
 !/.aiedit/projects/
