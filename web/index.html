@@ -9,7 +9,7 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%23d9f99d'/%3E%3Cpath d='M12 11v18h6V11zm10 0v18h6V11z' fill='%23151918'/%3E%3C/svg%3E"
     />
     <link rel="stylesheet" href="/static/style.css" />
-    <script type="module" src="/static/app.js"></script>
+    <script type="module" src="/static/app.js?v=minimal-1"></script>
   </head>
   <body>
     <div id="app">
@@ -99,6 +99,15 @@
                 </div>
                 <div id="video-stage" class="video-stage">
                   <video id="video" playsinline preload="metadata"></video>
+                  <div id="reference-overlay" class="reference-overlay" hidden>
+                    <img id="reference-image" alt="Reference overlay" /><video
+                      id="reference-video"
+                      playsinline
+                      muted
+                      preload="metadata"
+                      hidden
+                    ></video>
+                  </div>
                   <div id="video-placeholder" class="video-placeholder">
                     <span class="spinner"></span>Preparing your preview…
                   </div>
@@ -265,6 +274,104 @@
                 </div>
                 <div id="reference-list"></div>
               </details>
+              <details class="brief-card production-story">
+                <summary>Story, hook & music</summary>
+                <div class="production-form">
+                  <label
+                    >Topic<input
+                      id="story-topic"
+                      maxlength="500"
+                      placeholder="What is this reel about?" /></label
+                  ><button id="suggest-hooks" class="button subtle">
+                    Suggest hooks
+                  </button>
+                  <div id="hook-suggestions"></div>
+                  <div id="hook-history"></div>
+                  <label
+                    >Opening hook<textarea
+                      id="story-hook"
+                      maxlength="1000"
+                    ></textarea></label
+                  ><label
+                    >Why this hook?<textarea
+                      id="story-hook_reason"
+                      maxlength="2000"
+                    ></textarea></label
+                  ><label
+                    >Call to action<input
+                      id="story-cta"
+                      maxlength="1000"
+                      placeholder="What should the viewer do next?" /></label
+                  ><label
+                    >App referenced in this clip<input
+                      id="story-app_bundle_id"
+                      maxlength="200"
+                      placeholder="Your app bundle ID"
+                  /></label>
+                  <p class="panel-hint">
+                    The hook and CTA guide the edit or next recording. They do
+                    not invent spoken words.
+                  </p>
+                  <details>
+                    <summary>Save measured hook performance</summary>
+                    <label
+                      >Published source URL<input id="hook-source" type="url"
+                    /></label>
+                    <div class="two-settings">
+                      <label
+                        >Views<input
+                          id="hook-views"
+                          type="number"
+                          min="0" /></label
+                      ><label
+                        >Retention (%)<input
+                          id="hook-retention"
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.1"
+                      /></label>
+                    </div>
+                    <button id="save-hook-performance" class="button subtle">
+                      Save hook evidence
+                    </button>
+                  </details>
+                  <div class="list-heading"><span>MUSIC</span></div>
+                  <label
+                    >Track<select id="music-asset">
+                      <option value="">No music</option>
+                    </select></label
+                  >
+                  <div class="two-settings">
+                    <label
+                      >Volume<input
+                        id="music-volume"
+                        type="range"
+                        min="0"
+                        max="0.5"
+                        step="0.01"
+                        value="0.12" /></label
+                    ><label
+                      >Track offset (seconds)<input
+                        id="music-offset"
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value="0"
+                    /></label>
+                  </div>
+                  <label class="inline-label"
+                    >Lower music under speech<input
+                      id="music-duck"
+                      type="checkbox"
+                      checked
+                  /></label>
+                  <p class="panel-hint">
+                    Import or download tracks in Visuals. Exact voice-priority
+                    mixing is applied to the export.
+                  </p>
+                </div>
+              </details>
             </div>
             <aside class="inspector">
               <div class="panel-tabs" role="tablist">
@@ -284,6 +391,13 @@
                 >
                   Captions <span id="subtitle-count">0</span></button
                 ><button
+                  id="visuals-tab"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="visuals-panel"
+                >
+                  Visuals</button
+                ><button
                   id="review-tab"
                   role="tab"
                   aria-selected="false"
@@ -298,6 +412,17 @@
                 browser.<button id="reload-button">Load latest project</button>
               </div>
               <div id="cuts-panel" class="panel-body">
+                <button id="prepare-button" class="button analyze">
+                  ✧ Make first cut
+                </button>
+                <p class="panel-hint">
+                  Word-timed captions, quiet-section cuts, and repeated-take
+                  checks. Existing manual edits stay protected.
+                </p>
+                <details class="retakes">
+                  <summary>Repeated takes</summary>
+                  <div id="retake-list"></div>
+                </details>
                 <div class="tool-heading">
                   <span class="tool-icon">◌</span>
                   <div>
@@ -404,6 +529,34 @@
                       </select></label
                     >
                   </div>
+                  <label class="inline-label"
+                    >Uppercase<input id="caption-case" type="checkbox" checked
+                  /></label>
+                  <div class="two-settings">
+                    <label
+                      >Words per caption<select id="caption-max-words">
+                        <option value="1">1 word</option>
+                        <option value="2">Up to 2</option>
+                        <option value="3" selected>Up to 3</option>
+                      </select></label
+                    ><label
+                      >Safe margin (%)<input
+                        id="caption-margin"
+                        type="number"
+                        min="5"
+                        max="35"
+                        value="18"
+                    /></label>
+                  </div>
+                  <label
+                    >Outline<input
+                      id="caption-outline"
+                      type="range"
+                      min="0"
+                      max="8"
+                      step="0.5"
+                      value="4"
+                  /></label>
                 </div>
                 <div class="list-heading">
                   <span>CAPTIONS <small>source time</small></span
@@ -424,6 +577,103 @@
                 <p class="panel-hint">
                   “Cut speech” removes that caption’s source interval. Listen to
                   both joins and adjust the cut edges.
+                </p>
+              </div>
+              <div id="visuals-panel" class="panel-body" hidden>
+                <div class="tool-heading">
+                  <span class="tool-icon">▧</span>
+                  <div>
+                    <h2>Show what you mean</h2>
+                    <p>Screenshots, app recordings, and B-roll.</p>
+                  </div>
+                </div>
+                <div class="two-settings">
+                  <button id="add-asset" class="button subtle">
+                    ＋ Import asset</button
+                  ><button id="add-punch" class="button subtle">
+                    ＋ 1.1× punch-in
+                  </button>
+                </div>
+                <button id="refresh-assets" class="text-button">
+                  Refresh library
+                </button>
+                <details class="download-tools">
+                  <summary>Capture app on this Mac</summary>
+                  <select id="app-capture-mode" aria-label="App capture type">
+                    <option value="screenshot">Screenshot</option>
+                    <option value="video">Video recording</option></select
+                  ><label
+                    >Recording seconds<input
+                      id="app-capture-seconds"
+                      type="number"
+                      min="1"
+                      max="30"
+                      value="4" /></label
+                  ><button id="capture-app" class="button subtle">
+                    Capture locally
+                  </button>
+                  <p class="panel-hint">
+                    <span id="capture-target">Configured local app</span>. Uses an owned Simulator session and matching cached builds.
+                  </p>
+                </details>
+                <input
+                  id="asset-search"
+                  type="search"
+                  placeholder="Search assets and moods"
+                  aria-label="Search assets"
+                />
+                <div id="asset-list"></div>
+                <details class="download-tools">
+                  <summary>Download linked music or B-roll</summary>
+                  <input
+                    id="asset-url"
+                    type="url"
+                    placeholder="https://…"
+                    aria-label="Media source URL"
+                  /><select id="download-kind" aria-label="Media download type">
+                    <option value="audio">Music / audio</option>
+                    <option value="video">Video / B-roll</option></select
+                  ><button id="fetch-asset" class="button subtle">
+                    Download locally
+                  </button>
+                  <p id="download-status" class="panel-hint" role="status"></p>
+                </details>
+                <form id="asset-metadata" class="production-form" hidden>
+                  <h3>Asset details</h3>
+                  <label
+                    >Name<input
+                      id="asset-name"
+                      maxlength="200"
+                      required /></label
+                  ><label
+                    >Description<textarea
+                      id="asset-description"
+                      maxlength="4000"
+                    ></textarea></label
+                  ><label
+                    >Tags / mood<input
+                      id="asset-tags"
+                      placeholder="calm, tutorial, app demo" /></label
+                  ><label
+                    >Usage rights<textarea
+                      id="asset-rights"
+                      maxlength="4000"
+                    ></textarea>
+                  </label>
+                  <p id="asset-provenance" class="panel-hint"></p>
+                  <button class="button subtle" type="submit">
+                    Save details
+                  </button>
+                </form>
+                <div class="list-heading">
+                  <span>REFERENCE OVERLAYS · SOURCE TIME</span>
+                </div>
+                <div id="overlay-list"></div>
+                <div class="list-heading"><span>PUNCH-INS</span></div>
+                <div id="punch-list"></div>
+                <p class="panel-hint">
+                  Overlays and punch-ins preview here. Check the encoded export
+                  for exact timing and placement.
                 </p>
               </div>
               <div id="review-panel" class="panel-body" hidden>
@@ -510,7 +760,13 @@
         </section>
       </main>
     </div>
-    <input
+    <audio id="music-preview" preload="metadata"></audio
+    ><input
+      id="asset-file"
+      type="file"
+      accept="image/png,image/jpeg,image/webp,video/*,audio/*"
+      hidden
+    /><input
       id="video-input"
       type="file"
       accept="video/*,.mkv,.mts,.m2ts"

@@ -6,7 +6,7 @@ The [resource pack](https://246bfcda.ht-ml.app/) is a menu of 58 references with
 2. **Index speech.** Generate the full transcript with original timestamps. Correct recognition errors against the audio; keep the spoken language.
 3. **Shape the story.** Select source ranges, remove repeated attempts and false starts where appropriate, and preserve meaning. Use silence detection only as supporting evidence.
 4. **Hear a plain cut.** Render without burned captions. Check the actual encoded file, especially sentence joins and clipped words.
-5. **Add the needed treatment.** Correct and style captions. For future motion or B-roll work, define what each visual explains and try a short sample before rendering the complete treatment.
+5. **Add the needed treatment.** Correct and style captions. Define what each screenshot or B-roll overlay explains, and try a short sample before rendering the complete treatment.
 6. **Review a specific candidate.** Save feedback with the version, playback time, change, and reason. Link completed corrections to a later export. Explicitly mark preferences that should guide future edits.
 7. **Finish the candidate.** Review framing, language, audio, timing, asset sources, and usage rights in the encoded export. Share only when directed.
 
@@ -29,3 +29,7 @@ No untested shelf tool is represented as an installed or validated production de
 Export manifests freeze cut intervals, captions and style, source ranges, asset references, brief, and output checksum. Feedback points to a particular export filename and edited playback time. The history API searches saved changes and reasons. `reusable=true` filters for explicitly reusable feedback; it does not silently turn one-off requests into defaults.
 
 Generated transcripts remain available separately from edited captions. If a human changes captions while transcription runs, the operation preserves the human changes and reports a conflict; the generated transcript remains in the working folder.
+
+## Implemented minimal workflow
+
+See [minimal-workflow.md](minimal-workflow.md) for word-timed short captions, speech-gap cuts, retake decisions, hook/CTA planning, local asset and music organization, real web references, same-laptop app capture, overlays, punch-ins, and music mixing. The active engine is whisper.cpp DTW; WhisperX remains a documented alternative rather than an installed dependency.

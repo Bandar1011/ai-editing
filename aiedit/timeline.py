@@ -124,9 +124,10 @@ def validate_intervals(items: list[dict], duration: float) -> None:
 
 def ass_text(cues: list[dict], width: int, height: int, style: dict) -> str:
     size = round(style["font_size"] * height / 1080, 2)
-    margin = round(height * 0.065)
+    margin = round(height * style.get("margin_percent", 6.5) / 100)
+    horizontal_margin = round(width * 0.06)
     alignment = 8 if style["position"] == "top" else 2
-    outline = max(1, round(height / 540, 2))
+    outline = round(style.get("outline", 2) * height / 1080, 2)
     result = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -137,15 +138,15 @@ def ass_text(cues: list[dict], width: int, height: int, style: dict) -> str:
         "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Default,Arial,{size},&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,{outline},0,{alignment},{margin},{margin},{margin},1",
+        f"Style: Default,Arial,{size},&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,{outline},0,{alignment},{horizontal_margin},{horizontal_margin},{margin},1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     for cue in cues:
+        content = cue["text"].upper() if style.get("uppercase", False) else cue["text"]
         text = (
-            cue["text"]
-            .replace("\\", "\\\\")
+            content.replace("\\", "\\\\")
             .replace("{", "\\{")
             .replace("}", "\\}")
             .replace("\r", "")

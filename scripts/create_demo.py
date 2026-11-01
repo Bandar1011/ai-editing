@@ -1,5 +1,6 @@
 """Create a local spoken sample with deliberate gaps; no API calls or real footage."""
 
+import argparse
 import json
 import subprocess
 import sys
@@ -9,9 +10,18 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from aiedit.media import binary, run
 
-folder = ROOT / ".aiedit" / "demo-source"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    "--minimal",
+    action="store_true",
+    help="Vertical sample with a false start, captions, and a web-reference cue",
+)
+args = parser.parse_args()
+folder = ROOT / ".aiedit" / ("demo-minimal" if args.minimal else "demo-source")
 folder.mkdir(parents=True, exist_ok=True)
-target = folder / "A little less silence.mp4"
+target = folder / (
+    "Minimal reel workflow.mp4" if args.minimal else "A little less silence.mp4"
+)
 if target.exists():
     print(target)
     sys.exit(0)
@@ -20,6 +30,13 @@ phrases = [
     "Let's remove the pauses and keep the good parts.",
     "You can adjust every cut and subtitle before you export.",
 ]
+if args.minimal:
+    phrases = [
+        "This is how I.",
+        "This is how I make short captions for my videos.",
+        "Here is an example of word alignment.",
+        "Try three words at a time.",
+    ]
 clips = []
 for i, phrase in enumerate(phrases):
     aiff = folder / f"phrase-{i}.aiff"
@@ -101,6 +118,12 @@ filters = [
     "drawbox=x=1101:y=200:w=18:h=310:color=0x5e7a48:t=fill",
     "drawbox=x=1137:y=300:w=18:h=210:color=0xd4ee9f:t=fill",
 ]
+if args.minimal:
+    filters = [
+        "drawtext=text='AI EDITING / GENERATED DEMO':x=40:y=80:fontsize=22:fontcolor=0xa3b697",
+        "drawtext=text='Keep the story.':x=40:y=500:fontsize=52:fontcolor=0xe9efe3",
+        "drawtext=text='Lose the pauses.':x=40:y=565:fontsize=52:fontcolor=0xd4ee9f",
+    ]
 run(
     [
         binary("ffmpeg"),
@@ -110,7 +133,7 @@ run(
         "-f",
         "lavfi",
         "-i",
-        f"color=c=0x18241d:s=1280x720:r=30:d={duration}",
+        f"color=c=0x18241d:s={'540x960' if args.minimal else '1280x720'}:r=30:d={duration}",
         "-i",
         str(folder / "voice.wav"),
         "-vf",
