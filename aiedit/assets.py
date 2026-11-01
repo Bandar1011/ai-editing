@@ -3,9 +3,12 @@
 import hashlib
 import ipaddress
 import json
+import os
 import re
 import shutil
+import signal
 import socket
+import subprocess
 import threading
 import time
 import uuid
@@ -28,6 +31,53 @@ SUPPORTED = IMAGES | {
     ".flac",
     ".ogg",
 }
+
+
+def working_size(folder):
+    total = 0
+    for path in folder.rglob("*"):
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+        except FileNotFoundError:
+            pass  # A downloader may rename a completed fragment between reads.
+    return total
+
+
+def download(command, folder):
+    """Bound even downloads whose source omits size or duration metadata."""
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 300
+    try:
+        while True:
+            size = working_size(folder)
+            if size > 100 * 1024**2 or time.monotonic() > deadline:
+                raise ValueError(
+                    "Download exceeded the 100 MB working-space or five-minute transfer limit."
+                )
+            try:
+                output, _ = process.communicate(timeout=0.25)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if process.returncode:
+            raise ValueError("Media download failed: " + output[-1800:])
+        if working_size(folder) > 100 * 1024**2:
+            raise ValueError("Download exceeded the 100 MB working-space limit.")
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate(timeout=10)
 
 
 def valid_url(url):
@@ -217,7 +267,9 @@ class AssetLibrary:
             "--max-filesize",
             "100M" if kind == "audio" else "50M",
             "--match-filter",
-            "duration <= 600",
+            "duration <=? 600",
+            "--limit-rate",
+            "10M",
             "--ffmpeg-location",
             str(Path(media.binary("ffmpeg")).parent),
             "-o",
@@ -233,11 +285,30 @@ class AssetLibrary:
                 "--merge-output-format",
                 "mp4",
             ]
-        media.run([*command, "--", url], timeout=300)
+        download([*command, "--", url], folder)
         paths = [p for p in folder.iterdir() if p.suffix.lower() in SUPPORTED]
         if len(paths) != 1:
             raise ValueError(
                 "No media was downloaded. The source may require login or exceed the 10-minute/100 MB limit."
+            )
+        details = json.loads(
+            media.run(
+                [
+                    media.binary("ffprobe"),
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "json",
+                    str(paths[0]),
+                ]
+            )
+        )
+        duration = float(details.get("format", {}).get("duration") or 0)
+        if not 0 < duration <= 600:
+            raise ValueError(
+                "Downloaded media must have a known duration of at most ten minutes."
             )
         info = next(folder.glob("*.info.json"), None)
         metadata = json.loads(info.read_text()) if info else {}

@@ -562,3 +562,52 @@ def test_manual_retake_choice_survives_reanalysis():
     decisions = story.preserve_take_decisions(rerun, original)
     assert decisions[0]["selected"] == 1 and decisions[0]["id"] == original[0]["id"]
     assert "eye contact" in decisions[0]["reason"]
+
+
+def test_download_validates_actual_duration_when_source_metadata_is_missing(
+    recording, tmp_path, monkeypatch
+):
+    import shutil
+    from aiedit import assets
+
+    monkeypatch.setattr(
+        assets.socket,
+        "getaddrinfo",
+        lambda *a: [(None, None, None, None, ("1.1.1.1", 443))],
+    )
+    original_binary = media.binary
+    monkeypatch.setattr(
+        media,
+        "binary",
+        lambda name: "yt-dlp" if name == "yt-dlp" else original_binary(name),
+    )
+
+    def fetched(command, folder):
+        shutil.copyfile(recording, folder / "source.mp4")
+        (folder / "source.info.json").write_text(
+            json.dumps({"title": "Reference", "duration": None})
+        )
+
+    monkeypatch.setattr(assets, "download", fetched)
+    library = assets.AssetLibrary(tmp_path / "library" / "assets")
+    saved = library.fetch("https://example.com/media", "video")
+    assert saved["duration"] == 5 and saved["source_url"] == "https://example.com/media"
+    monkeypatch.setattr(
+        media, "run", lambda *a, **k: json.dumps({"format": {"duration": 601}})
+    )
+    with pytest.raises(ValueError, match="at most ten minutes"):
+        library.fetch("https://example.com/too-long", "video")
+    assert len(library.list()) == 1
+
+
+def test_unknown_size_download_stops_its_owned_process_at_the_disk_budget(tmp_path):
+    import sys
+    import time
+    from aiedit.assets import download
+
+    with (tmp_path / "source.part").open("wb") as output:
+        output.truncate(101 * 1024**2)
+    started = time.monotonic()
+    with pytest.raises(ValueError, match="100 MB"):
+        download([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path)
+    assert time.monotonic() - started < 3

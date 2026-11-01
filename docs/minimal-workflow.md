@@ -57,7 +57,7 @@ python3 scripts/editor.py asset-job JOB_ID
 
 Inbox import deduplicates by content checksum and preserves originals. Inspect images or representative video frames, listen where necessary, and add descriptive tags, mood, purpose, source, and rights through `PUT /api/assets/ASSET_ID`. File extension alone is not semantic classification. Asset search uses names, descriptions, and tags.
 
-Downloads use the installed yt-dlp without browser cookies or user configuration. They are bounded to one item, ten minutes, and 100 MB per item. A failed login-protected or unsupported download is reported. Import an available local file instead of bypassing access controls. A downloader does not grant usage rights.
+Downloads use the installed yt-dlp without browser cookies or user configuration. They are bounded to one item, ten minutes of media, a five-minute transfer, and a 100 MB working-directory budget. Sources without duration metadata are checked against the actual downloaded file. A failed login-protected or unsupported download is reported. Import an available local file instead of bypassing access controls. A downloader does not grant usage rights.
 
 ## Online references
 
