@@ -294,13 +294,20 @@ class Editor:
         after_success=None,
     ) -> dict:
         if self.assistant is not None and self.assistant.is_running(identifier):
-            if kind == "prepare":
-                return self.repo.load(identifier)
+            current = self.repo.load(identifier)
+            if (
+                kind == "prepare" and request_key
+                and current["jobs"].get("prepare", {}).get("request_key") == request_key
+            ):
+                return current
             raise HTTPException(409, "Wait for AI editing to finish before starting another operation.")
         with self.repo.lock(identifier):
             current = self.repo.load(identifier)
             if current["jobs"].get("prepare", {}).get("next_job_pending") or current["jobs"].get("assistant", {}).get("status") in {"queued", "running"}:
-                if kind == "prepare":
+                if (
+                    kind == "prepare" and request_key
+                    and current["jobs"].get("prepare", {}).get("request_key") == request_key
+                ):
                     return current
                 raise HTTPException(409, "Wait for AI editing to finish before starting another operation.")
             job_id = uuid.uuid4().hex

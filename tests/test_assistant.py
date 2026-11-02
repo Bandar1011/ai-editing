@@ -113,6 +113,10 @@ def test_duplicate_prepare_and_wrong_tool_token_do_not_start_another_ai(
         assert (
             response.json()["jobs"]["prepare"]["id"] == before["jobs"]["prepare"]["id"]
         )
+        conflict = client.post(
+            f"/api/projects/{p['id']}/prepare", json={"language": "ar"}
+        )
+        assert conflict.status_code == 409, conflict.text
         route = f"/api/projects/{p['id']}/assistant/tools"
         assert (
             client.post(
@@ -442,6 +446,18 @@ def test_native_operations_are_blocked_during_ai_handoff(prepared_client, operat
         client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
         assert entered.wait(10)
         assert p["id"] not in editor.active
+        assert (
+            client.post(
+                f"/api/projects/{p['id']}/prepare", json={"language": "en"}
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                f"/api/projects/{p['id']}/prepare", json={"language": "ar"}
+            ).status_code
+            == 409
+        )
         result = client.post(f"/api/projects/{p['id']}/{operation}", json={})
         assert result.status_code == 409, result.text
     finally:
