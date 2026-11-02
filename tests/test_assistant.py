@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import threading
 import time
@@ -302,6 +303,39 @@ def test_take_revision_survives_this_sessions_progress_updates(prepared_client):
         "message"
     ]
     assert after["retakes"][0]["selected"] is None
+
+
+@pytest.mark.parametrize("extension", ["jpg", "png"])
+def test_existing_still_assets_can_be_inspected(prepared_client, tmp_path, extension):
+    from PIL import Image
+
+    client, editor, p, _ = prepared_client
+    image = tmp_path / ("reference." + extension)
+    Image.new("RGB", (225, 48), (255, 0, 0)).save(image)
+    asset = editor.library.import_file(
+        image, name="Generated reference", rights="Generated test image"
+    )
+
+    def session(run):
+        call(editor, run, "context")
+        result = editor.assistant.tool(
+            run.project_id, run.token, "inspect", {"asset_id": asset["id"]}
+        )
+        decoded = Image.open(io.BytesIO(base64.b64decode(result["content"][1]["data"])))
+        red, green, blue = decoded.convert("RGB").getpixel((20, 20))
+        assert red > 200 and green < 30 and blue < 30
+        assert asset["id"] in run.inspected
+        return {
+            "summary": "Inspected the existing reference.",
+            "review_notes": ["Title needs review."],
+        }
+
+    editor.assistant = Assistant(editor, session=session)
+    client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
+    after = wait_ai(editor, p["id"])
+    assert after["jobs"]["assistant"]["status"] == "done", after["jobs"]["assistant"][
+        "message"
+    ]
 
 
 def test_manual_caption_between_attempts_is_protected(prepared_client):

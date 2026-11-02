@@ -477,12 +477,14 @@ class Assistant:
             ) from exc
 
     def inspect(self, run, p, options):
+        still = False
         if options.asset_id:
             asset = self.editor.library.get(options.asset_id)
             if asset["kind"] == "audio":
                 raise ValueError("Audio listening is unavailable in this session.")
             path = self.editor.library.path(options.asset_id)
             duration = asset.get("duration", 0)
+            still = asset["kind"] == "image"
         else:
             path = self.editor.source(p)
             duration = p["media"]["duration"]
@@ -496,8 +498,7 @@ class Assistant:
                     media.binary("ffmpeg"),
                     "-v",
                     "error",
-                    "-ss",
-                    str(options.time),
+                    *([] if still else ["-ss", str(options.time)]),
                     "-i",
                     str(path),
                     "-vf",
@@ -510,6 +511,10 @@ class Assistant:
                 ],
                 timeout=60,
             )
+            if not output.is_file() or output.stat().st_size == 0:
+                raise ValueError(
+                    "No frame was decoded. Choose an earlier video timestamp or a different reference."
+                )
             return output.read_bytes()
 
         data = self.native(extract)
