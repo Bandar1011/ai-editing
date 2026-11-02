@@ -2,6 +2,8 @@
 
 The chat agent directs the edit. Local tools execute it and the browser keeps every decision reviewable. A source clip is never modified or published automatically.
 
+Read [editor.md](../editor.md) for editing instructions. [AGENTS.md](../AGENTS.md) covers engineering work; this document supplies commands and API examples.
+
 Repeatable settings live in `aiedit/presets.py`: fixed title and caption sizes, two title lines maximum, 1–3 caption words, 120 ms minimum pauses, and 25 ms speech shoulders. Detection and rendering apply these consistently. The agent decides takes, caption corrections, title wording, reference type/content, and contextual placement; it intervenes in timing only for a demonstrated detector problem or specific feedback. Already approved edits remain unchanged.
 
 The style reference is [Aiden Johnston's reel](https://www.instagram.com/reel/DegOQG6Tydw/): hooks, word-timed short captions, hard cuts, a labeled B-roll/music library, real browser references, occasional punch-ins, and a CTA. This workflow captures app references on the same laptop. It uses the installed local whisper.cpp alignment engine in place of the reel's WhisperX setup.
@@ -59,7 +61,11 @@ python3 scripts/editor.py asset-job JOB_ID
 
 Inbox import deduplicates by content checksum and preserves originals. Inspect images or representative video frames, listen where necessary, and add descriptive tags, mood, purpose, source, and rights through `PUT /api/assets/ASSET_ID`. File extension alone is not semantic classification. Asset search uses names, descriptions, and tags.
 
-The creator's default screenshot/B-roll entrance sound is **Bubble pop**, stored locally with the tag `default-reference-pop`. Find it with `python3 scripts/editor.py assets default-reference-pop`. During chat-driven edits, add one separate audio overlay at each reference's first visible source timestamp, at volume `0.35`, using the asset's actual duration within the available footage. If the reference starts inside a removed interval, anchor the sound to its first kept frame. Do not add another pop at an intervening speech cut, to captions, or to an opening title. Keep existing user-adjusted effects; check for an existing entrance effect before adding one. This is an editing-workflow default, not a browser setting that automatically inserts sounds on every manual overlay addition. The original file, local asset ID, and source/rights notes stay in the private library.
+The creator's default screenshot/B-roll entrance sound is **Bubble pop**, stored locally with the tag `default-reference-pop`. Find it with `python3 scripts/editor.py assets default-reference-pop`. Exactly one playable audio asset should have that tag. The default recipe comes from `GET /api/assets/reference-sound`, with the approved 35% volume and 0.10-second playback offset. The original file, selected asset ID, and rights notes stay in the private library.
+
+The browser automatically attaches that sound when **Add overlay** creates a screenshot/B-roll reference. Assets explicitly tagged `title` or `graphic` use that type instead. In the overlay inspector, **Type** distinguishes Screenshot / B-roll, Title, and Graphic; **Pop sound** and **Pop volume** control the linked effect. It appears in Added audio; selecting it opens its reference, and Delete disables the sound without deleting the visual. Moving/trimming, disabling, removing, or undoing the reference also updates the sound. One reference plays one pop continuously from its first kept visible frame, even across speech cuts; the sound stops at the earlier of the audio's end or reference disappearance.
+
+For API/chat additions, set `role: "reference"` on new screenshot/B-roll overlays and omit `entrance_sound` to receive the automatic default. Set `role: "title"` or `"graphic"` for other visuals, or explicitly set `entrance_sound: null` to opt out. The returned `entrance_sound` freezes the chosen local asset, offset, volume, and enabled state. Preserve that object on subsequent saves; omitted fields on existing IDs are preserved. Missing or ambiguous defaults fail a new reference save with a useful error. Legacy unclassified overlays and approved manual effects stay unchanged. Do not place an additional manual pop alongside an automatically attached one.
 
 Downloads use the installed yt-dlp without browser cookies or user configuration. They are bounded to one item, ten minutes of media, a five-minute transfer, and a 100 MB working-directory budget. Sources without duration metadata are checked against the actual downloaded file. A failed login-protected or unsupported download is reported. Import an available local file instead of bypassing access controls. A downloader does not grant usage rights.
 
@@ -112,13 +118,13 @@ Use [the title-writing skill](../skills/reel-titles/SKILL.md) to choose a faithf
 uv run scripts/title_card.py /absolute/private/path/title.png --line "First line" --line "Second line"
 ```
 
-The helper uses the approved fixed title preset: Geeza Pro Regular, 129 px per 1080 frame width, up to two lines, and 2.5 edited seconds. Longer wording fails rather than shrinking or adding lines. It shapes locally with FFmpeg/libass and paints exact black using Pillow. Set only the frame `--width` normally; change font or size only for an explicit style request. Never redistribute system fonts. Place the card using its actual normalized dimensions without stretching. HLG titles use `white_nits: 1000`; ordinary references default to `203`. This changes graphics only. New projects also start with the approved caption style (52 at 1080 image height, Geeza Pro Regular, 4.5 outline); authored existing styles are preserved.
+The helper uses the approved fixed title preset: Geeza Pro Regular, 129 px per 1080 frame width, up to two lines, and 2.5 edited seconds. Longer wording fails rather than shrinking or adding lines. It shapes locally with FFmpeg/libass and paints exact black using Pillow. Set only the frame `--width` normally; change font or size only for an explicit style request. Never redistribute system fonts. Import title assets with the `title` tag, and set their overlay `role: "title"` to exclude the reference pop. Place the card using its actual normalized dimensions without stretching. HLG titles use `white_nits: 1000`; ordinary references default to `203`. This changes graphics only. New projects also start with the approved caption style (52 at 1080 image height, Geeza Pro Regular, 4.5 outline); authored existing styles are preserved.
 
 Save with the latest `base_revision`; preserve all unrelated fields. Production decisions use:
 
 ```json
 {
-  "overlays":[{"id":"reference1","asset_id":"0123456789ab","start":4.2,"end":7.2,"asset_in":0,"layout":"top","enabled":true,"purpose":"Show the feature being discussed"}],
+  "overlays":[{"id":"reference1","asset_id":"0123456789ab","start":4.2,"end":7.2,"asset_in":0,"layout":"top","role":"reference","enabled":true,"purpose":"Show the feature being discussed"}],
   "punches":[{"id":"punch1","start":8,"end":10,"scale":1.1,"enabled":true}],
   "music":{"asset_id":"abcdef012345","volume":0.12,"offset":0,"duck":true,"enabled":true},
   "story":{"topic":"Focus timer","hook":"Chosen opening","hook_reason":"Why it matches the footage","cta":"The intended next step","app_bundle_id":"com.example.app"}

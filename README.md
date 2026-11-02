@@ -68,7 +68,7 @@ python3 scripts/editor.py history "caption placement" --reusable
 
 Operations are asynchronous: poll `get` until the relevant `jobs` entry is `done`, and report `error` messages. Wait for one operation to finish before starting another for that project. Silence thresholds identify quiet audio, not delivery quality or false starts.
 
-For custom decisions, fetch the latest project and save an Edit JSON file containing `base_revision`, `name`, `cuts`, `subtitles`, `subtitle_style`, `brief`, `references`, `overlays`, `punches`, `music`, and `story`:
+For video-editing instructions, read [editor.md](editor.md). For custom decisions, fetch the latest project and save an Edit JSON file containing `base_revision`, `name`, `cuts`, `subtitles`, `subtitle_style`, `brief`, `references`, `overlays`, `punches`, `music`, and `story`:
 
 ```sh
 python3 scripts/editor.py save PROJECT_ID --file /absolute/path/edit.json

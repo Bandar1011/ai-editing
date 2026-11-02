@@ -1,0 +1,15 @@
+{
+  "overlay": {"id":"ref","role":"reference","start":1,"end":4,"enabled":true,"entrance_sound":{"asset_id":"abcdef012345","asset_in":0.1,"volume":0.35,"enabled":true}},
+  "cases": [
+    {"name":"plain entrance","kept":[[0,5]],"sound_duration":0.7,"expected":{"start":1,"end":1.6,"source":1}},
+    {"name":"tail crosses a cut","kept":[[0,1.2],[2.2,5]],"sound_duration":0.7,"expected":{"start":1,"end":1.6,"source":1}},
+    {"name":"start removed","kept":[[0,0.8],[2.2,5]],"sound_duration":0.7,"expected":{"start":0.8,"end":1.4,"source":2.2}},
+    {"name":"fully removed","kept":[[0,0.8],[4.2,5]],"sound_duration":0.7,"expected":null},
+    {"name":"short reference","kept":[[0,5]],"sound_duration":0.7,"overlay":{"end":1.1},"expected":{"start":1,"end":1.1,"source":1}},
+    {"name":"parent disabled","kept":[[0,5]],"sound_duration":0.7,"overlay":{"enabled":false},"expected":null},
+    {"name":"sound disabled","kept":[[0,5]],"sound_duration":0.7,"sound":{"enabled":false},"expected":null},
+    {"name":"title exclusion","kept":[[0,5]],"sound_duration":0.7,"overlay":{"role":"title"},"expected":null},
+    {"name":"source end clamp","kept":[[0,1.3]],"sound_duration":0.7,"expected":{"start":1,"end":1.3,"source":1}},
+    {"name":"legacy exclusion","kept":[[0,5]],"sound_duration":0.7,"overlay":{"role":null},"expected":null}
+  ]
+}

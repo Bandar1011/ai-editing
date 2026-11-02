@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import media
+from .presets import REFERENCE_SOUND
 
 IMAGES = {".png", ".jpg", ".jpeg", ".webp"}
 SUPPORTED = IMAGES | {
@@ -276,9 +277,41 @@ class AssetLibrary:
 
     def resolve(self, project):
         ids = {o["asset_id"] for o in project.get("overlays", [])}
+        ids.update(
+            o["entrance_sound"]["asset_id"]
+            for o in project.get("overlays", [])
+            if o.get("entrance_sound")
+        )
         if project.get("music"):
             ids.add(project["music"]["asset_id"])
         return {i: {"metadata": self.get(i), "path": self.path(i)} for i in ids}
+
+    def validate_reference_sound(self, sound):
+        asset = self.get(sound["asset_id"])
+        if asset["kind"] != "audio" or not asset["has_audio"]:
+            raise ValueError("Choose an audio-only asset for the pop sound.")
+        if not self.path(asset["id"]).is_file():
+            raise ValueError("The selected pop sound file is missing from the local library.")
+        if not 0 <= sound["asset_in"] < asset["duration"]:
+            raise ValueError("The pop sound offset must be inside the audio asset.")
+
+    def reference_sound_default(self, required=False):
+        with self.lock:
+            matches = [a for a in self.list() if REFERENCE_SOUND["tag"] in a["tags"]]
+            if not matches and not required:
+                return None
+            if len(matches) != 1:
+                raise ValueError(
+                    "Tag exactly one local audio asset default-reference-pop to enable the automatic pop sound."
+                )
+            sound = {
+                "asset_id": matches[0]["id"],
+                "asset_in": REFERENCE_SOUND["asset_in"],
+                "volume": REFERENCE_SOUND["volume"],
+                "enabled": True,
+            }
+            self.validate_reference_sound(sound)
+            return sound
 
     def fetch(self, url, kind="audio", tags=None, rights=""):
         valid_url(url)

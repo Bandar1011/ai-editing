@@ -614,9 +614,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             else:
                 updates.pop("split_points", None)
             if edit.overlays is not None:
-                updates["overlays"] = [
-                    overlay.model_dump() for overlay in edit.overlays
-                ]
+                updates["overlays"] = production.normalize_overlays(
+                    p["overlays"], edit.overlays, editor.library
+                )
             for key in ("cuts", "subtitles"):
                 validate_intervals(updates[key], p["media"]["duration"])
                 if len({c["id"] for c in updates[key]}) != len(updates[key]):

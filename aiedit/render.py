@@ -2,7 +2,7 @@
 
 import uuid
 
-from .timeline import ass_text, kept_ranges, remap_subtitles
+from .timeline import ass_text, entrance_event, kept_ranges, remap_subtitles
 
 
 def mapped_spans(start, end, kept):
@@ -178,6 +178,19 @@ def export_video(
                         f"[{input_index}:a:0]atrim=duration={length:.6f},asetpts=PTS-STARTPTS,volume={overlay.get('volume', 0.4)},afade=t=in:d=0.012,afade=t=out:st={tail:.6f}:d=0.012,adelay={span['start'] * 1000:.3f}:all=1[{label}]"
                     )
                     overlay_audio.append(label)
+                input_index += 1
+            sound = overlay.get("entrance_sound")
+            event = entrance_event(
+                overlay, kept, assets[sound["asset_id"]]["metadata"]["duration"]
+            ) if sound else None
+            if event:
+                inputs += ["-ss", f"{event['asset_in']:.6f}", "-i", str(assets[event["asset_id"]]["path"].resolve())]
+                length = event["end"] - event["start"]
+                label = f"entrance{count}"
+                filters.append(
+                    f"[{input_index}:a:0]atrim=duration={length:.6f},asetpts=PTS-STARTPTS,volume={event['volume']},afade=t=in:d=0.012,afade=t=out:st={max(0, length - 0.012):.6f}:d=0.012,adelay={event['start'] * 1000:.3f}:all=1[{label}]"
+                )
+                overlay_audio.append(label)
                 input_index += 1
         if overlay_audio:
             if base_audio is None:

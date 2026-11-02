@@ -1,4 +1,5 @@
-import { overlayBox } from "./canvas.mjs?v=factory-4";
+import { overlayBox } from "./canvas.mjs?v=factory-5";
+import { entranceEvent, keptRanges } from "./timeline.mjs?v=factory-5";
 export function createProduction({
   getProject,
   applyProject,
@@ -97,7 +98,8 @@ export function createProduction({
   function render(p) {
     if (
       !libraryReady ||
-      p.overlays.some((o) => !library.some((a) => a.id === o.asset_id)) ||
+      p.overlays.some((o) => !library.some((a) => a.id === o.asset_id) ||
+        (o.entrance_sound && !library.some((a) => a.id === o.entrance_sound.asset_id))) ||
       (p.music && !library.some((a) => a.id === p.music.asset_id))
     )
       loadLibrary().catch((e) => toast(e.message, true));
@@ -122,7 +124,9 @@ export function createProduction({
       .map((o) => {
         const a = library.find((a) => a.id === o.asset_id),
           audioOnly = a?.kind === "audio";
-        return `<article class="overlay-card" data-overlay="${o.id}"><div class="row-heading"><strong>${esc(a?.name || "Overlay")}</strong><button class="text-button" data-remove-overlay="${o.id}">Remove</button></div><div class="two-settings"><label>Source start<input data-overlay-field="start" value="${time(o.start)}" aria-label="Overlay start"></label><label>Source end<input data-overlay-field="end" value="${time(o.end)}" aria-label="Overlay end"></label></div>${a?.kind !== "image" ? `<label>Clip offset (seconds)<input type="number" min="0" step="0.1" data-overlay-field="asset_in" value="${o.asset_in}"></label>` : ""}${!audioOnly && (o.x != null || o.y != null) ? `<button class="text-button" data-reset-overlay="${o.id}">Reset position</button>` : ""}${!audioOnly ? `<label>Placement<select data-overlay-field="layout"><option value="top" ${o.layout === "top" ? "selected" : ""}>Top</option><option value="bottom" ${o.layout === "bottom" ? "selected" : ""}>Bottom</option><option value="full" ${o.layout === "full" ? "selected" : ""}>Full frame</option></select></label>` : ""}${a?.has_audio && !audioOnly ? `<label class="inline-label">Play clip audio<input type="checkbox" data-overlay-field="audio" ${o.audio ? "checked" : ""}></label>` : ""}${a?.has_audio && (o.audio || audioOnly) ? `<label>Audio volume<input type="range" min="0" max="1" step="0.01" data-overlay-field="volume" value="${o.volume ?? 0.4}"></label>` : ""}<label class="inline-label">${audioOnly ? "Enable audio" : "Show overlay"}<input type="checkbox" data-overlay-field="enabled" ${o.enabled ? "checked" : ""}></label></article>`;
+        const role = !audioOnly ? `<label>Type<select data-overlay-field="role"><option value="" ${!o.role ? "selected" : ""} disabled>Unspecified</option>${[["reference", "Screenshot / B-roll"], ["title", "Title"], ["graphic", "Graphic"]].map(([value, label]) => `<option value="${value}" ${o.role === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>` : "";
+        const pop = o.role === "reference" ? `<label class="inline-label">Pop sound<input type="checkbox" data-pop-field="enabled" ${o.entrance_sound?.enabled ? "checked" : ""}></label>${o.entrance_sound?.enabled ? `<label>Pop volume<input type="range" min="0" max="1" step="0.01" data-pop-field="volume" value="${o.entrance_sound.volume}"></label>` : ""}` : "";
+        return `<article class="overlay-card" data-overlay="${o.id}"><div class="row-heading"><strong>${esc(a?.name || "Overlay")}</strong><button class="text-button" data-remove-overlay="${o.id}">Remove</button></div>${role}<div class="two-settings"><label>Source start<input data-overlay-field="start" value="${time(o.start)}" aria-label="Overlay start"></label><label>Source end<input data-overlay-field="end" value="${time(o.end)}" aria-label="Overlay end"></label></div>${a?.kind !== "image" ? `<label>Clip offset (seconds)<input type="number" min="0" step="0.1" data-overlay-field="asset_in" value="${o.asset_in}"></label>` : ""}${!audioOnly && (o.x != null || o.y != null) ? `<button class="text-button" data-reset-overlay="${o.id}">Reset position</button>` : ""}${!audioOnly ? `<label>Placement<select data-overlay-field="layout"><option value="top" ${o.layout === "top" ? "selected" : ""}>Top</option><option value="bottom" ${o.layout === "bottom" ? "selected" : ""}>Bottom</option><option value="full" ${o.layout === "full" ? "selected" : ""}>Full frame</option></select></label>` : ""}${pop}${a?.has_audio && !audioOnly ? `<label class="inline-label">Play clip audio<input type="checkbox" data-overlay-field="audio" ${o.audio ? "checked" : ""}></label>` : ""}${a?.has_audio && (o.audio || audioOnly) ? `<label>Audio volume<input type="range" min="0" max="1" step="0.01" data-overlay-field="volume" value="${o.volume ?? 0.4}"></label>` : ""}<label class="inline-label">${audioOnly ? "Enable audio" : "Show overlay"}<input type="checkbox" data-overlay-field="enabled" ${o.enabled ? "checked" : ""}></label></article>`;
       })
       .join("");
     $("punch-list").innerHTML = p.punches
@@ -228,8 +232,16 @@ export function createProduction({
     await loadLibrary();
     toast("Asset details saved.");
   });
-  function addAsset(a, asMusic = false) {
+  async function defaultPop() {
+    const sound = await api("/api/assets/reference-sound");
+    if (!sound) throw new Error("Tag your pop audio default-reference-pop in Media details first.");
+    return sound;
+  }
+  async function addAsset(a, asMusic = false) {
     const p = getProject();
+    const role = a.kind === "audio" ? null : a.tags.includes("title") ? "title" : a.tags.includes("graphic") ? "graphic" : "reference";
+    const entrance = !asMusic && role === "reference" ? await defaultPop() : null;
+    if (getProject() !== p) return;
     pushUndo();
     if (asMusic) {
       p.music = {
@@ -257,6 +269,7 @@ export function createProduction({
         layout: "top",
         enabled: true,
         purpose: "",
+        ...(role ? { role, entrance_sound: entrance } : {}),
       });
     }
     change();
@@ -271,19 +284,19 @@ export function createProduction({
         .querySelector(`[data-overlay="${p.overlays.at(-1).id}"]`)
         ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
-  $("asset-list").onclick = (e) => {
+  $("asset-list").onclick = act(async (e) => {
     const use = e.target.closest("[data-use-asset]"),
       edit = e.target.closest("[data-edit-asset]"),
       music = e.target.closest("[data-use-music]");
-    if (use) addAsset(library.find((a) => a.id === use.dataset.useAsset));
+    if (use) await addAsset(library.find((a) => a.id === use.dataset.useAsset));
     if (music)
-      addAsset(
+      await addAsset(
         library.find((a) => a.id === music.dataset.useMusic),
         true,
       );
     if (edit)
       openMetadata(library.find((a) => a.id === edit.dataset.editAsset));
-  };
+  });
   $("fetch-asset").onclick = act(async () => {
     const result = await api("/api/assets/fetch", {
       method: "POST",
@@ -343,10 +356,22 @@ export function createProduction({
         : null;
       change();
     };
-  $("overlay-list").onchange = (e) => {
+  $("overlay-list").onchange = act(async (e) => {
     const row = e.target.closest("[data-overlay]"),
-      field = e.target.dataset.overlayField;
-    if (!row || !field) return;
+      field = e.target.dataset.overlayField,
+      popField = e.target.dataset.popField;
+    if (!row || (!field && !popField)) return;
+    if (popField) {
+      const p = getProject(), o = p.overlays.find((o) => o.id === row.dataset.overlay);
+      let sound = o.entrance_sound;
+      if (!sound && e.target.checked) sound = await defaultPop();
+      if (getProject() !== p || !p.overlays.includes(o) || !sound) return;
+      const value = popField === "enabled" ? e.target.checked : Number(e.target.value);
+      if (popField === "volume" && (!Number.isFinite(value) || value < 0 || value > 1)) return;
+      pushUndo();
+      o.entrance_sound = { ...sound, [popField]: value };
+      change(); render(p); return;
+    }
     const p = getProject(),
       o = p.overlays.find((o) => o.id === row.dataset.overlay),
       value =
@@ -382,15 +407,18 @@ export function createProduction({
       return;
     }
     if (o[field] === value) return;
+    const sound = field === "role" && value === "reference" ? await defaultPop() : null;
+    if (getProject() !== p || !p.overlays.includes(o)) return;
     pushUndo();
     o[field] = value;
+    if (field === "role") o.entrance_sound = sound;
     if (field === "layout") {
       delete o.x;
       delete o.y;
     }
     change();
-    if (field === "audio" || field === "layout") render(p);
-  };
+    if (field === "audio" || field === "layout" || field === "role") render(p);
+  });
   $("overlay-list").onclick = (e) => {
     const reset = e.target.closest("[data-reset-overlay]");
     if (reset) {
@@ -462,6 +490,7 @@ export function createProduction({
     render(p);
   };
   const overlayAudio = new Map(),
+    entranceAudio = new Map(),
     overlayNodes = new Map();
   function updatePreview() {
     const p = getProject();
@@ -581,6 +610,38 @@ export function createProduction({
       if (!sounding.has(key)) {
         player.pause();
         overlayAudio.delete(key);
+      }
+    const entrances = new Set(), kept = keptRanges(p.media.duration, p.cuts);
+    for (const o of p.overlays) {
+      const sound = o.entrance_sound,
+        a = library.find((a) => a.id === sound?.asset_id),
+        event = a && entranceEvent(o, kept, a.duration);
+      if (!event) continue;
+      const key = `${p.id}/${o.id}/${sound.asset_id}`;
+      entrances.add(key);
+      if (!entranceAudio.has(key)) {
+        const player = new Audio(`/api/assets/${sound.asset_id}/media`);
+        player.preload = "auto";
+        player.addEventListener("loadedmetadata", updatePreview);
+        entranceAudio.set(key, player);
+        player.load();
+      }
+      const player = entranceAudio.get(key), tEdited = outputTime(t);
+      if (!edited || video.paused || video.muted || tEdited < event.start || tEdited >= event.end) {
+        player.pause();
+        continue;
+      }
+      const expected = event.asset_in + tEdited - event.start;
+      if (!Number.isFinite(player.duration)) continue;
+      if (Math.abs(player.currentTime - expected) > .04)
+        player.currentTime = Math.min(expected, player.duration);
+      player.volume = event.volume * video.volume;
+      if (player.paused) player.play().catch(() => {});
+    }
+    for (const [key, player] of entranceAudio)
+      if (!entrances.has(key)) {
+        player.pause();
+        entranceAudio.delete(key);
       }
     const audio = $("music-preview"),
       music = edited && p.music?.enabled ? p.music : null;

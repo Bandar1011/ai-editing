@@ -1,4 +1,4 @@
-import { createCanvas } from "./canvas.mjs?v=factory-4";
+import { createCanvas } from "./canvas.mjs?v=factory-5";
 import {
   keptRanges,
   clipsFor,
@@ -7,8 +7,10 @@ import {
   trimClip,
   mappedSpans,
   lanesFor,
-} from "./timeline.mjs?v=factory-4";
-import { createProduction } from "./production.js?v=factory-4";
+  entranceEvent,
+} from "./timeline.mjs?v=factory-5";
+import { createProduction } from "./production.js?v=factory-5";
+import { mergeOverlayNormalization } from "./overlay-state.mjs?v=factory-5";
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s ?? "").replace(
@@ -253,7 +255,16 @@ async function saveNow() {
     project.jobs = response.jobs;
     project.exports = response.exports;
     project.reviews = response.reviews;
+    const normalized = mergeOverlayNormalization(project.overlays, snapshot.overlays, response.overlays);
+    const enriched = normalized !== project.overlays;
+    project.overlays = normalized;
+    for (const entry of [...undo, ...redo])
+      entry.overlays = mergeOverlayNormalization(entry.overlays, snapshot.overlays, response.overlays);
     savedEditable = editable(response);
+    if (enriched) {
+      production.render(project);
+      renderTimeline();
+    }
     if (sequence === editSequence) {
       dirty = false;
       localStorage.removeItem(`aiedit-draft-${id}`);
@@ -554,6 +565,14 @@ function renderTimeline() {
       }),
     )
     .join("");
+  $("addon-audio-track").innerHTML += project.overlays
+    .map((o) => {
+      const sound = o.entrance_sound;
+      const a = assets.find((a) => a.id === sound?.asset_id);
+      const event = a && entranceEvent(o, sourceRanges(), a.duration);
+      return event ? audioClip(a, event.start, event.end, event.asset_in,
+        `data-track-entrance="${o.id}"`, a.name) : "";
+    }).join("");
   for (const [row, track] of [
     ["caption", "subtitle"],
     ["overlay", "overlay"],
@@ -701,7 +720,7 @@ function layerItem(selection = selectedLayer) {
   return (
     selection.kind === "caption"
       ? project.subtitles
-      : selection.kind === "overlay"
+      : selection.kind === "overlay" || selection.kind === "entrance"
         ? project.overlays
         : selection.kind === "effect"
           ? project.punches
@@ -745,13 +764,17 @@ function deleteSelection() {
   }
   if (busy() || conflicted) return;
   pushUndo();
-  const key =
+  if (selectedLayer.kind === "entrance") {
+    item.entrance_sound.enabled = false;
+  } else {
+    const key =
     selectedLayer.kind === "caption"
       ? "subtitles"
       : selectedLayer.kind === "overlay"
         ? "overlays"
         : "punches";
-  project[key] = project[key].filter((o) => o.id !== item.id);
+    project[key] = project[key].filter((o) => o.id !== item.id);
+  }
   selectedLayer = null;
   selectedSubtitle = null;
   changed();
@@ -1179,7 +1202,7 @@ $("timeline-grid").addEventListener("pointerdown", (e) => {
   if (!project || !e.target.closest(".timeline-lane")) return;
   if (
     e.target.closest(
-      "[data-track-overlay],[data-track-effect],[data-track-music],[data-cue]",
+      "[data-track-overlay],[data-track-entrance],[data-track-effect],[data-track-music],[data-cue]",
     )
   )
     return;
@@ -1336,7 +1359,7 @@ $("subtitle-track").onclick = (e) => {
 };
 $("timeline-grid").addEventListener("click", (e) => {
   const item = e.target.closest(
-    "[data-track-overlay],[data-track-effect],[data-track-music]",
+    "[data-track-overlay],[data-track-entrance],[data-track-effect],[data-track-music]",
   );
   if (!item) return;
   if (tab) setTab("visuals");
@@ -1345,11 +1368,11 @@ $("timeline-grid").addEventListener("click", (e) => {
     $("music-asset").focus();
     return;
   }
-  const key = item.dataset.trackOverlay ? "overlays" : "punches",
-    id = item.dataset.trackOverlay || item.dataset.trackEffect;
+  const key = item.dataset.trackOverlay || item.dataset.trackEntrance ? "overlays" : "punches",
+    id = item.dataset.trackOverlay || item.dataset.trackEntrance || item.dataset.trackEffect;
   const part = project[key].find((o) => o.id === id);
   selectLayer(
-    { kind: key === "overlays" ? "overlay" : "effect", id },
+    { kind: item.dataset.trackEntrance ? "entrance" : key === "overlays" ? "overlay" : "effect", id },
     { seekTo: true },
   );
   const selector =

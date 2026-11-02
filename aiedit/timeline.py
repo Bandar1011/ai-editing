@@ -30,6 +30,32 @@ def kept_ranges(duration: float, cuts: list[dict]) -> list[tuple[float, float]]:
     return kept
 
 
+def entrance_event(overlay: dict, kept: list[tuple[float, float]], sound_duration: float):
+    """One linked sound on the edited clock, starting at first kept visibility."""
+    sound = overlay.get("entrance_sound")
+    if (
+        overlay.get("role") != "reference"
+        or not overlay.get("enabled", True)
+        or not sound
+        or not sound.get("enabled", True)
+    ):
+        return None
+    first, last, source, output = None, None, None, 0.0
+    for left, right in kept:
+        a, b = max(left, overlay["start"]), min(right, overlay["end"])
+        if b - a >= 0.02:
+            if first is None:
+                first, source = output + a - left, a
+            last = output + b - left
+        output += right - left
+    if first is None:
+        return None
+    length = min(sound_duration - sound["asset_in"], last - first)
+    if length <= 0:
+        return None
+    return dict(sound, overlay_id=overlay["id"], start=first, end=first + length, source=source)
+
+
 def remap_subtitles(
     subtitles: list[dict], kept: list[tuple[float, float]]
 ) -> list[dict]:

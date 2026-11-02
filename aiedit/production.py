@@ -18,12 +18,19 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import media, story
 from .assets import valid_url
-from .presets import CAPTIONS, SPEECH
+from .presets import CAPTIONS, REFERENCE_SOUND, SPEECH
 from .timeline import kept_ranges, validate_intervals
 
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+
+class EntranceSound(Strict):
+    asset_id: str = Field(pattern=r"^[a-f0-9]{12}$")
+    asset_in: float = Field(default=0, ge=0)
+    volume: float = Field(default=REFERENCE_SOUND["volume"], ge=0, le=1)
+    enabled: bool = True
 
 
 class Overlay(Strict):
@@ -42,6 +49,8 @@ class Overlay(Strict):
     audio: bool = False
     volume: float = Field(default=0.4, ge=0, le=1)
     purpose: str = Field(default="", max_length=2000)
+    role: Literal["reference", "title", "graphic"] | None = None
+    entrance_sound: EntranceSound | None = None
 
 
 class Punch(Strict):
@@ -241,6 +250,28 @@ def prepare(editor, identifier, options):
     editor.repo.change(identifier, update)
 
 
+def normalize_overlays(current, submitted, library):
+    previous = {o["id"]: o for o in current}
+    result = []
+    for overlay in submitted:
+        value = overlay.model_dump()
+        before = previous.get(overlay.id, {})
+        for field in ("role", "entrance_sound"):
+            if field not in overlay.model_fields_set:
+                if field in before:
+                    value[field] = copy.deepcopy(before[field])
+                else:
+                    value.pop(field, None)
+        if (
+            overlay.id not in previous
+            and value.get("role") == "reference"
+            and "entrance_sound" not in overlay.model_fields_set
+        ):
+            value["entrance_sound"] = library.reference_sound_default(required=True)
+        result.append(value)
+    return result
+
+
 def validate_production(editor, updates, duration):
     for name in ("overlays", "punches"):
         if name not in updates:
@@ -252,6 +283,12 @@ def validate_production(editor, updates, duration):
         asset = editor.library.get(overlay["asset_id"])
         if asset["kind"] not in {"image", "video", "audio"}:
             raise ValueError("Choose an image, video, or audio clip.")
+        if overlay.get("role") and asset["kind"] not in {"image", "video"}:
+            raise ValueError("Only images and videos can be visual references, titles, or graphics.")
+        if overlay.get("entrance_sound"):
+            if overlay.get("role") != "reference":
+                raise ValueError("Only screenshot/B-roll references can have a pop sound.")
+            editor.library.validate_reference_sound(overlay["entrance_sound"])
         if overlay.get("audio") and not asset["has_audio"]:
             raise ValueError("This clip has no audio.")
         if (
@@ -376,6 +413,10 @@ def router(editor):
     @api.get("/api/assets")
     def assets(q: str = "", kind: str = ""):
         return editor.library.list(q, kind)
+
+    @api.get("/api/assets/reference-sound")
+    def reference_sound():
+        return editor.library.reference_sound_default()
 
     @api.post("/api/assets/fetch")
     def fetch(options: FetchAsset):

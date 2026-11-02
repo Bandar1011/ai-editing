@@ -26,7 +26,7 @@ export function createCanvas({
   function element() {
     const selected = getSelection();
     return (
-      selected &&
+      selected && selected.kind !== "entrance" &&
       stage.querySelector(
         selected.kind === "caption"
           ? `[data-canvas-caption="${selected.id}"]`

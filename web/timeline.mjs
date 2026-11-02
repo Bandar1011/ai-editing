@@ -100,6 +100,26 @@ export function mappedSpans(start, end, clips) {
   });
 }
 
+export function entranceEvent(overlay, kept, soundDuration) {
+  const sound = overlay.entrance_sound;
+  if (overlay.role !== "reference" || overlay.enabled === false || !sound || sound.enabled === false)
+    return null;
+  let first = null, last = null, source = null, output = 0;
+  for (const [left, right] of kept) {
+    const a = Math.max(left, overlay.start), b = Math.min(right, overlay.end);
+    if (b - a >= .02) {
+      if (first === null) { first = output + a - left; source = a; }
+      last = output + b - left;
+    }
+    output += right - left;
+  }
+  if (first === null) return null;
+  const length = Math.min(soundDuration - sound.asset_in, last - first);
+  return length > 0
+    ? { ...sound, overlay_id: overlay.id, start: first, end: first + length, source }
+    : null;
+}
+
 export function lanesFor(items) {
   const ends = [],
     lanes = [];

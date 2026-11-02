@@ -32,3 +32,9 @@ SPEECH = MappingProxyType({
     "minimum_speech_ms": 80,
     "minimum_silence_ms": 80,
 })
+
+REFERENCE_SOUND = MappingProxyType({
+    "tag": "default-reference-pop",
+    "asset_in": 0.10,
+    "volume": 0.35,
+})
