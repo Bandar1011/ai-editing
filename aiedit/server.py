@@ -482,6 +482,7 @@ class Editor:
                 cuts + story.retake_cuts(project["retakes"]), project["cuts"]
             )
             project["silence_options"] = options.model_dump()
+            project["preparation_key"] = None
 
         self.repo.change(identifier, update)
 
@@ -536,6 +537,7 @@ class Editor:
                 ),
                 transcript=transcript,
                 captions_authored=False,
+                preparation_key=None,
             )
 
         self.repo.change(identifier, update)
@@ -801,6 +803,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             "jobs": p["jobs"],
             "brief": p["brief"],
             "story": p["story"],
+                "preparation_kind": p.get("preparation_kind"),
+                "preparation_warnings": p.get("preparation_warnings", []),
+                "editorial_phase": "takes" if any(r.get("status") == "review" for r in p["retakes"]) else "captions_title_visuals",
             "source_words": source_words,
             "captions": captions,
             "cuts": [c for c in p["cuts"] if overlaps(c)],
@@ -843,6 +848,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 "Preview, local encoding and immutable export",
             ],
             "save_route": f"/api/projects/{identifier}",
+                "decision_route": f"/api/projects/{identifier}/editorial",
             "latest_export": p["exports"][-1]["file"] if p["exports"] else None,
         }
 

@@ -19,6 +19,7 @@ python3 scripts/editor.py context PROJECT_ID --start 60
 Prepare can queue once behind the initial preview. The same pending request returns the same job; a conflicting operation returns 409. `--wait` follows that job and returns the first editorial context window when it completes. `context` returns at most 60 source seconds with `window.next_start` for continuation. `status PROJECT_ID` reads compact queue/stage state without fetching old export snapshots. A normal browser upload can be followed immediately by Prepare video. Preparation:
 
 - Runs the installed whisper.cpp engine with DTW alignment and flash attention disabled. The model's word boundaries are estimates to review against the audio.
+- Preserves no-audio and digital-silence recordings without recognition or new cuts. Existing edits remain intact.
 - Reuses complete source-derived PCM, recognition, silence/VAD and retake artifacts when their dependencies match. Language/model/tool or relevant analysis settings invalidate the affected stage. Changing caption grouping does not rerun recognition. Incomplete/corrupt artifacts are recomputed; a processing failure never applies a partial edit. Raw analysis is separate from editable captions and project snapshots.
 - Keeps the raw, source-timed transcript and word confidence separate from captions.
 - Groups captions into 1–3 words without crossing cut boundaries. It preserves the spoken language; uppercase styling leaves Arabic intact.
@@ -49,6 +50,20 @@ Record a real example with `hook-add --file hook.json`:
 ```json
 {"text":"My actual published opening", "topic":"focus", "source_url":"https://example.com/reel", "views":1200, "retention":0.52, "notes":"Measured values supplied by the creator"}
 ```
+
+## Apply editorial decisions
+
+Use `context` for the bounded source-time packet and `apply` for targeted decisions. Resolve uncertain takes first, then read updated context before correcting captions and placing title/reference assets. The app preserves untouched fields and applies each batch atomically with a revision check. It rejects a batch mixing take changes with caption/visual changes because caption IDs can change. Newly revealed take footage receives captions without replacing existing corrections.
+
+```sh
+python3 scripts/editor.py apply PROJECT_ID --file decisions.json
+```
+
+```json
+{"base_revision":42,"caption_fixes":[{"id":"caption-id","text":"Correct spoken words"}],"story":{"topic":"The actual topic"}}
+```
+
+Use `take_choices` with `id`, `selected` and `reason` for a take batch. `overlays` upserts only submitted IDs; existing positions, sounds and other layers are preserved when omitted. Use an imported title card with `role: "title"` or a captured reference with `role: "reference"`. The deterministic title helper below owns formatting. A stale revision returns 409; reread context and reconcile it. The CLI returns a small acknowledgement instead of every historical export.
 
 ## Asset inbox and mood library
 

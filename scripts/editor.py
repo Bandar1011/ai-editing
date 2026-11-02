@@ -22,6 +22,7 @@ parser.add_argument(
         "get",
         "status",
         "context",
+        "apply",
         "save",
         "silence",
         "transcribe",
@@ -161,6 +162,13 @@ elif args.command not in ("health", "list"):
         if args.end is not None:
             params["end"] = args.end
         route += "/context?" + urllib.parse.urlencode(params)
+    elif args.command == "apply":
+        if not args.file:
+            parser.error(
+                "apply requires --file with editorial decisions and base_revision"
+            )
+        route += "/editorial"
+        method, body = "PATCH", json.loads(args.file.read_text())
     elif args.command == "save":
         if not args.file:
             parser.error(
@@ -260,6 +268,14 @@ try:
             f"{base}/api/projects/{identifier}{suffix}", timeout=60
         ) as response:
             result = json.load(response)
+    if args.command == "apply":
+        result = {
+            "id": result["id"],
+            "revision": result["revision"],
+            "caption_count": len(result["subtitles"]),
+            "overlay_count": len(result["overlays"]),
+            "context": f"/api/projects/{result['id']}/context",
+        }
     print(json.dumps(result, ensure_ascii=False, indent=2))
 except urllib.error.HTTPError as exc:
     print(exc.read().decode(), file=sys.stderr)

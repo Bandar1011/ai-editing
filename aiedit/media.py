@@ -287,6 +287,18 @@ def pcm_audio_quality(wav, start, end):
     }
 
 
+def digital_silence(wav):
+    """Only treat zero/dither-level PCM as absent speech, not quiet speakers."""
+    with wave.open(str(wav), "rb") as stream:
+        while chunk := stream.readframes(64000):
+            samples = array.array("h", chunk)
+            if sys.byteorder != "little":
+                samples.byteswap()
+            if any(abs(sample) > 2 for sample in samples):
+                return False
+    return True
+
+
 def speech_regions(wav: Path, model: Path, padding=SPEECH["padding"]) -> list[dict]:
     if not model.is_file():
         raise ValueError("Install the local speech detector with scripts/setup_vad.py.")

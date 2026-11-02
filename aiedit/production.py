@@ -94,6 +94,23 @@ class TakeDecision(Strict):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class CaptionFix(Strict):
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,40}$")
+    text: str = Field(min_length=1, max_length=5000)
+
+
+class TakeChoice(TakeDecision):
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,40}$")
+
+
+class EditorialChanges(Strict):
+    base_revision: int = Field(ge=1)
+    caption_fixes: list[CaptionFix] = Field(default_factory=list, max_length=1000)
+    take_choices: list[TakeChoice] = Field(default_factory=list, max_length=200)
+    overlays: list[Overlay] = Field(default_factory=list, max_length=100)
+    story: StoryPlan | None = None
+
+
 class AssetImport(Strict):
     path: str
     name: str = Field(default="", max_length=200)
@@ -182,6 +199,39 @@ def prepare(editor, identifier, options):
             "This project already has captions. Use the explicit Generate action to replace them, or prepare a new clip."
         )
     analysis = editor.analysis(identifier)
+    if (
+        before.get("preparation_key")
+        and before.get("captions_authored", False)
+        and before.get("preparation") == options.model_dump()
+        and (
+            options.language == "auto"
+            or before.get("transcript", {}).get("language") == options.language
+        )
+    ):
+        editor.progress(identifier, stage="apply", status="done", reused=True)
+        return
+    if not before["media"]["has_audio"] or analysis.silent():
+        signature = key_for(
+            {
+                "source": analysis.source_key,
+                "visual_only": True,
+                "signal": analysis.keys.get("signal"),
+            }
+        )
+
+        def preserve(current):
+            current.update(
+                preparation_key=signature,
+                preparation_kind="visual",
+                preparation_warnings=[
+                    "No speech signal. Existing footage, cuts and captions were preserved."
+                ],
+            )
+
+        with editor.repo.lock(identifier):
+            if editor.repo.load(identifier).get("preparation_key") != signature:
+                editor.repo.change(identifier, preserve)
+        return
     transcript = editor.read_transcript(identifier, options.language, analysis=analysis)
     words = transcript.get("words", [])
     if not words:
@@ -254,6 +304,7 @@ def prepare(editor, identifier, options):
                 captions_authored=False,
                 preparation=dict(options.model_dump(), max_words=max_words),
                 preparation_key=signature,
+                preparation_kind="speech",
                 preparation_warnings=warnings,
                 analysis_cuts=merge_automatic(quiet + gaps + fillers),
                 speech_regions=regions,
@@ -296,10 +347,14 @@ def validate_production(editor, updates, duration):
         if asset["kind"] not in {"image", "video", "audio"}:
             raise ValueError("Choose an image, video, or audio clip.")
         if overlay.get("role") and asset["kind"] not in {"image", "video"}:
-            raise ValueError("Only images and videos can be visual references, titles, or graphics.")
+            raise ValueError(
+                "Only images and videos can be visual references, titles, or graphics."
+            )
         if overlay.get("entrance_sound"):
             if overlay.get("role") != "reference":
-                raise ValueError("Only screenshot/B-roll references can have a pop sound.")
+                raise ValueError(
+                    "Only screenshot/B-roll references can have a pop sound."
+                )
             editor.library.validate_reference_sound(overlay["entrance_sound"])
         if overlay.get("audio") and not asset["has_audio"]:
             raise ValueError("This clip has no audio.")
@@ -316,6 +371,60 @@ def validate_production(editor, updates, duration):
         asset = editor.library.get(music["asset_id"])
         if not asset["has_audio"] or music["offset"] >= asset["duration"]:
             raise ValueError("Choose an audio asset and an offset inside its duration.")
+
+
+def apply_take(current, retake_id, options):
+    duration = current["media"]["duration"]
+    previously_visible = kept_ranges(duration, current["cuts"])
+    decision = next((c for c in current["retakes"] if c["id"] == retake_id), None)
+    if decision is None:
+        raise ValueError("Retake group not found. Read the latest context.")
+    decision.update(
+        selected=options.selected,
+        reason=options.reason,
+        status="selected" if options.selected is not None else "keep_both",
+        automatic=False,
+    )
+    automatic = current.get(
+        "analysis_cuts",
+        [c for c in current["cuts"] if c["kind"] not in {"manual", "retake"}],
+    )
+    current["cuts"] = preserve_manual(
+        automatic + story.retake_cuts(current["retakes"]), current["cuts"]
+    )
+    if not current.get("captions_authored", True) and current.get("transcript", {}).get(
+        "words"
+    ):
+        current["subtitles"] = story.short_captions(
+            current["transcript"]["words"],
+            current["cuts"],
+            current["media"]["duration"],
+            current["subtitle_style"]["max_words"],
+        )
+    elif current.get("transcript", {}).get("words"):
+        visible = kept_ranges(duration, current["cuts"])
+        existing = current["subtitles"]
+        missing = []
+        for word in current["transcript"]["words"]:
+            centre = (word["start"] + word["end"]) / 2
+            if (
+                any(a <= centre < b for a, b in visible)
+                and not any(a <= centre < b for a, b in previously_visible)
+                and not any(
+                    c["start"] < word["end"] and c["end"] > word["start"]
+                    for c in existing
+                )
+            ):
+                missing.append(word)
+        exclusions = current["cuts"] + [
+            dict(start=c["start"], end=c["end"], enabled=True) for c in existing
+        ]
+        additions = story.short_captions(
+            missing, exclusions, duration, current["subtitle_style"]["max_words"]
+        )
+        current["subtitles"] = sorted(
+            existing + additions, key=lambda cue: cue["start"]
+        )
 
 
 def router(editor):
@@ -358,7 +467,11 @@ def router(editor):
 
         def execute():
             with download_lock:
-                downloads[job_id].update(status="running", started_at=time.time(), message="Capturing the app on this Mac")
+                downloads[job_id].update(
+                    status="running",
+                    started_at=time.time(),
+                    message="Capturing the app on this Mac",
+                )
             try:
                 root = Path(config["cache_root"]).expanduser() / "Captures"
                 root.mkdir(parents=True, exist_ok=True)
@@ -440,11 +553,20 @@ def router(editor):
         with download_lock:
             if any(j["status"] in {"queued", "running"} for j in downloads.values()):
                 raise HTTPException(409, "Wait for the current download to finish.")
-            downloads[job_id] = {"id": job_id, "status": "queued", "queued_at": time.time(), "message": "Waiting for the media worker"}
+            downloads[job_id] = {
+                "id": job_id,
+                "status": "queued",
+                "queued_at": time.time(),
+                "message": "Waiting for the media worker",
+            }
 
         def execute():
             with download_lock:
-                downloads[job_id].update(status="running", started_at=time.time(), message="Downloading to your local library")
+                downloads[job_id].update(
+                    status="running",
+                    started_at=time.time(),
+                    message="Downloading to your local library",
+                )
             try:
                 asset = editor.library.fetch(
                     options.url, options.kind, options.tags, options.rights
@@ -501,8 +623,6 @@ def router(editor):
     @api.post("/api/projects/{identifier}/prepare")
     def prepare_project(identifier: str, options: PrepareOptions):
         p = editor.repo.load(identifier)
-        if not p["media"]["has_audio"]:
-            raise ValueError("This video has no speech track.")
 
         def run(identifier):
             if not editor.repo.load(identifier)["media_ready"]:
@@ -535,32 +655,72 @@ def router(editor):
                 raise HTTPException(404, "Retake group not found.")
 
             def update(current):
-                decision = next(c for c in current["retakes"] if c["id"] == retake_id)
-                decision.update(
-                    selected=options.selected,
-                    reason=options.reason,
-                    status="selected" if options.selected is not None else "keep_both",
-                    automatic=False,
+                apply_take(current, retake_id, options)
+
+            return editor.repo.change(identifier, update)
+
+    @api.patch("/api/projects/{identifier}/editorial")
+    def editorial_changes(identifier: str, options: EditorialChanges):
+        with editor.repo.lock(identifier):
+            p = editor.repo.load(identifier)
+            if options.base_revision != p["revision"]:
+                raise HTTPException(
+                    409,
+                    "The project changed. Read the latest context before applying decisions.",
                 )
-                automatic = current.get(
-                    "analysis_cuts",
-                    [
-                        c
-                        for c in current["cuts"]
-                        if c["kind"] not in {"manual", "retake"}
-                    ],
+            if options.take_choices and (options.caption_fixes or options.overlays):
+                raise ValueError(
+                    "Choose takes first, then read updated context before fixing captions or placing visuals."
                 )
-                current["cuts"] = preserve_manual(
-                    automatic + story.retake_cuts(current["retakes"]), current["cuts"]
-                )
-                if not current.get("captions_authored", True) and current.get(
-                    "transcript", {}
-                ).get("words"):
-                    current["subtitles"] = story.short_captions(
-                        current["transcript"]["words"],
-                        current["cuts"],
-                        current["media"]["duration"],
-                        current["subtitle_style"]["max_words"],
+            for items in (
+                options.caption_fixes,
+                options.take_choices,
+                options.overlays,
+            ):
+                if len({item.id for item in items}) != len(items):
+                    raise ValueError("Send each decision ID only once.")
+
+            def update(current):
+                for correction in options.caption_fixes:
+                    if not correction.text.strip():
+                        raise ValueError("A subtitle correction must contain text.")
+                    cue = next(
+                        (c for c in current["subtitles"] if c["id"] == correction.id),
+                        None,
+                    )
+                    if cue is None:
+                        raise ValueError("Caption not found. Read the latest context.")
+                    if cue["text"] != correction.text:
+                        cue["text"] = correction.text
+                        current["captions_authored"] = True
+                for choice in options.take_choices:
+                    if choice.base_revision not in (None, options.base_revision):
+                        raise ValueError("Use the same revision for every take choice.")
+                    apply_take(current, choice.id, choice)
+                if options.overlays:
+                    remaining = {o.id: o for o in options.overlays}
+                    combined = []
+                    for previous in current["overlays"]:
+                        submitted = remaining.pop(previous["id"], None)
+                        value = (
+                            dict(previous, **submitted.model_dump(exclude_unset=True))
+                            if submitted is not None
+                            else previous
+                        )
+                        combined.append(Overlay.model_validate(value))
+                    combined += list(remaining.values())
+                    if len(combined) > 100:
+                        raise ValueError("Use at most 100 overlays.")
+                    overlays = normalize_overlays(
+                        current["overlays"], combined, editor.library
+                    )
+                    validate_production(
+                        editor, {"overlays": overlays}, current["media"]["duration"]
+                    )
+                    current["overlays"] = overlays
+                if options.story is not None:
+                    current["story"].update(
+                        options.story.model_dump(exclude_unset=True)
                     )
 
             return editor.repo.change(identifier, update)

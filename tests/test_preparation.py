@@ -25,6 +25,18 @@ def prepared_client(recording, tmp_path, monkeypatch):
             str(executable) if name == "whisper-cli" else original_binary(name)
         ),
     )
+    from aiedit import analysis
+
+    original_identity = analysis.tool_identity
+    monkeypatch.setattr(
+        analysis,
+        "tool_identity",
+        lambda name: (
+            analysis.file_identity(executable)
+            if name == "whisper-cli"
+            else original_identity(name)
+        ),
+    )
 
     def recognize(wav, directory, model, language, duration):
         media.validate_speech_audio(wav)
@@ -75,7 +87,20 @@ def test_repeated_preparation_and_grouping_reuse_raw_analysis(
         pytest.fail("A warm preparation must not start another decoder or recognizer")
 
     monkeypatch.setattr(media, "run", unexpected)
-    monkeypatch.setattr(media.subprocess, "run", unexpected)
+    original_run = media.subprocess.run
+
+    def guarded(command, *args, **kwargs):
+        from pathlib import Path
+
+        if Path(command[0]).name in {
+            "ffmpeg",
+            "whisper-cli",
+            "whisper-vad-speech-segments",
+        }:
+            unexpected()
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(media.subprocess, "run", guarded)
     p = prepare_video(client, editor, p, language="en")
     assert {k: v for k, v in edit_body(p).items() if k != "base_revision"} == {
         k: v for k, v in original_edit.items() if k != "base_revision"
@@ -285,3 +310,253 @@ def test_take_decision_rejects_stale_context(prepared_client):
     )
     assert response.status_code == 409
     assert editor.repo.load(p["id"])["retakes"][0] == candidate
+
+
+def test_generate_invalidates_preparation_completion_but_keeps_raw_cache(
+    prepared_client,
+):
+    client, editor, p, calls = prepared_client
+    p = prepare_video(client, editor, p, language="en")
+    route = f"/api/projects/{p['id']}"
+    response = client.post(route + "/transcribe", json={"language": "ar"})
+    assert response.status_code == 200
+    generated = wait_for(editor, p["id"])
+    assert generated["transcript"]["language"] == "ar"
+    assert generated["preparation_key"] is None
+    prepared = prepare_video(client, editor, generated, language="en")
+    assert prepared["transcript"]["language"] == "en"
+    assert calls == ["en", "ar"]
+
+
+def test_pcm_corruption_rebuilds_audio_without_rerunning_recognition(
+    prepared_client, monkeypatch
+):
+    client, editor, p, calls = prepared_client
+    p = prepare_video(client, editor, p, language="en")
+    wav = editor.repo.directory(p["id"]) / "working/speech.wav"
+    wav.write_bytes(b"broken PCM")
+    extracts = []
+    original = media.extract_speech_audio
+
+    def extract(*args):
+        extracts.append(1)
+        return original(*args)
+
+    monkeypatch.setattr(media, "extract_speech_audio", extract)
+    prepare_video(client, editor, p, language="en")
+    media.validate_speech_audio(wav)
+    assert extracts == [1] and calls == ["en"]
+
+
+def test_scoring_contract_change_reuses_recognition(prepared_client, monkeypatch):
+    from aiedit.analysis import CONTRACTS
+
+    client, editor, p, calls = prepared_client
+    p = prepare_video(client, editor, p, language="en")
+    monkeypatch.setitem(CONTRACTS, "retakes", CONTRACTS["retakes"] + 1)
+    p = prepare_video(client, editor, p, language="en")
+    assert calls == ["en"]
+    stages = {entry["stage"]: entry for entry in p["jobs"]["prepare"]["stages"]}
+    assert stages["transcription"]["reused"] and not stages["retakes"]["reused"]
+
+
+def test_vad_model_and_padding_change_reuse_recognition(prepared_client, monkeypatch):
+    from aiedit import analysis
+
+    client, editor, p, calls = prepared_client
+    editor.vad_model.write_bytes(b"vad-model1")
+    identity = analysis.tool_identity
+    monkeypatch.setattr(
+        analysis,
+        "tool_identity",
+        lambda name: (
+            "test-vad-tool" if name == "whisper-vad-speech-segments" else identity(name)
+        ),
+    )
+    vad_calls = []
+
+    def regions(wav, model, padding):
+        vad_calls.append(padding)
+        return [{"start": 0, "end": 1.2}, {"start": 3, "end": 4.2}]
+
+    monkeypatch.setattr(media, "speech_regions", regions)
+    p = prepare_video(client, editor, p, language="en")
+    prepare_video(client, editor, p, language="en")
+    assert len(vad_calls) == 1
+    p = prepare_video(client, editor, p, language="en", padding=0.05)
+    editor.vad_model.write_bytes(b"vad-model2")
+    prepare_video(client, editor, p, language="en", padding=0.05)
+    assert len(vad_calls) == 3 and calls == ["en"]
+
+
+def test_editorial_decisions_apply_only_targeted_fields_and_are_atomic(prepared_client):
+    client, editor, p, _ = prepared_client
+    p = prepare_video(client, editor, p, language="en")
+    route = f"/api/projects/{p['id']}/editorial"
+    original_style = p["subtitle_style"].copy()
+    original_cuts = p["cuts"]
+    cue = p["subtitles"][0]
+    changed = client.patch(
+        route,
+        json={
+            "base_revision": p["revision"],
+            "caption_fixes": [{"id": cue["id"], "text": "Faithful correction"}],
+            "story": {"topic": "Clarity"},
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    after = changed.json()
+    assert after["subtitles"][0]["text"] == "Faithful correction"
+    assert after["subtitles"][1:] == p["subtitles"][1:]
+    assert after["subtitle_style"] == original_style and after["cuts"] == original_cuts
+    assert after["story"]["topic"] == "Clarity"
+    assert (
+        client.patch(
+            route, json={"base_revision": p["revision"], "story": {"topic": "Stale"}}
+        ).status_code
+        == 409
+    )
+    invalid = client.patch(
+        route,
+        json={
+            "base_revision": after["revision"],
+            "caption_fixes": [
+                {"id": cue["id"], "text": "Must roll back"},
+                {"id": "unknown", "text": "No caption"},
+            ],
+        },
+    )
+    assert invalid.status_code == 400
+    current = editor.repo.load(p["id"])
+    assert current["revision"] == after["revision"]
+    assert current["subtitles"] == after["subtitles"]
+
+
+def test_editorial_take_choices_precede_caption_corrections(prepared_client):
+    client, editor, p, _ = prepared_client
+    p = prepare_video(client, editor, p, language="en")
+    route = f"/api/projects/{p['id']}/editorial"
+    choice = {
+        "id": p["retakes"][0]["id"],
+        "selected": 1,
+        "reason": "Prefer the delivery",
+    }
+    mixed = client.patch(
+        route,
+        json={
+            "base_revision": p["revision"],
+            "take_choices": [choice],
+            "caption_fixes": [{"id": p["subtitles"][0]["id"], "text": "Correction"}],
+        },
+    )
+    assert mixed.status_code == 400
+    assert editor.repo.load(p["id"])["revision"] == p["revision"]
+    selected = client.patch(
+        route, json={"base_revision": p["revision"], "take_choices": [choice]}
+    )
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["retakes"][0]["selected"] == 1
+    assert any(c["start"] >= 3 for c in selected.json()["subtitles"])
+
+
+def test_take_change_fills_newly_visible_captions_without_replacing_corrections(
+    prepared_client,
+):
+    client, editor, p, _ = prepared_client
+    p = prepare_video(client, editor, p, language="en")
+    route = f"/api/projects/{p['id']}/editorial"
+    cue = p["subtitles"][0]
+    corrected = client.patch(
+        route,
+        json={
+            "base_revision": p["revision"],
+            "caption_fixes": [{"id": cue["id"], "text": "Keep my correction"}],
+        },
+    ).json()
+    selected = client.patch(
+        route,
+        json={
+            "base_revision": corrected["revision"],
+            "take_choices": [
+                {
+                    "id": p["retakes"][0]["id"],
+                    "selected": 1,
+                    "reason": "Better delivery",
+                }
+            ],
+        },
+    )
+    assert selected.status_code == 200, selected.text
+    current = selected.json()
+    assert any(
+        c["id"] == cue["id"] and c["text"] == "Keep my correction"
+        for c in current["subtitles"]
+    )
+    assert any(c["start"] >= 3 for c in current["subtitles"])
+
+
+@pytest.mark.parametrize("has_audio", [False, True])
+def test_silent_recording_keeps_interactions_without_asr(
+    recording, tmp_path, monkeypatch, has_audio
+):
+    source = tmp_path / "silent.mp4"
+    command = [
+        media.binary("ffmpeg"),
+        "-v",
+        "error",
+        "-n",
+        "-i",
+        str(recording),
+        "-c:v",
+        "copy",
+    ]
+    command += ["-af", "volume=0", "-c:a", "aac"] if has_audio else ["-an"]
+    media.run(command + [str(source)])
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("A silent recording must not invoke recognition")
+
+    monkeypatch.setattr(media, "transcribe_audio", unexpected)
+    with TestClient(
+        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+    ) as client:
+        editor = client.app.state.editor
+        p = wait_for(editor, editor.create(source, source.name)["id"])
+        result = prepare_video(client, editor, p)
+        assert result["cuts"] == [] and result["subtitles"] == []
+        assert result["preparation_kind"] == "visual"
+        assert result["media"]["duration"] == p["media"]["duration"]
+
+
+def test_approved_caption_edit_is_not_retuned_after_contract_upgrade(
+    prepared_client, monkeypatch
+):
+    from aiedit.analysis import CONTRACTS
+
+    client, editor, p, calls = prepared_client
+    p = prepare_video(client, editor, p, language="en")
+    body = edit_body(p)
+    body["subtitles"][0]["text"] = "Approved wording"
+    assert client.put(f"/api/projects/{p['id']}", json=body).status_code == 200
+    monkeypatch.setitem(CONTRACTS, "prepare", CONTRACTS["prepare"] + 1)
+    result = prepare_video(client, editor, p, language="en")
+    assert result["subtitles"] == body["subtitles"] and calls == ["en"]
+
+
+def test_editorial_overlay_update_preserves_positions_and_unrelated_layers(prepared_client, tmp_path):
+    client, editor, p, _ = prepared_client
+    image = tmp_path / "reference.png"
+    media.run([media.binary("ffmpeg"), "-v", "error", "-n", "-f", "lavfi", "-i", "color=red:s=64x64",
+               "-frames:v", "1", "-threads", "1", str(image)])
+    asset = editor.library.import_file(image)
+    route = f"/api/projects/{p['id']}/editorial"
+    first = client.patch(route, json={"base_revision": p["revision"], "overlays": [
+        {"id": "first", "asset_id": asset["id"], "start": 0, "end": 4, "role": "graphic", "x": .2, "y": .3},
+        {"id": "second", "asset_id": asset["id"], "start": 1, "end": 3, "role": "graphic"}]}).json()
+    second = client.patch(route, json={"base_revision": first["revision"], "overlays": [
+        {"id": "first", "asset_id": asset["id"], "start": 0, "end": 4, "width": .6}]})
+    assert second.status_code == 200, second.text
+    overlays = second.json()["overlays"]
+    assert [o["id"] for o in overlays] == ["first", "second"]
+    assert (overlays[0]["x"], overlays[0]["y"], overlays[0]["role"], overlays[0]["width"]) == (.2, .3, "graphic", .6)
+    assert overlays[1] == first["overlays"][1]

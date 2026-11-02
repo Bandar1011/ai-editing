@@ -18,6 +18,7 @@ export function createProduction({
   task,
   selectLayer,
   onPreviewUpdate,
+  getEditVersion = () => 0,
 }) {
   const $ = (id) => document.getElementById(id);
   const esc = (s) =>
@@ -176,6 +177,7 @@ export function createProduction({
     if (getProject()?.id !== id) return;
     const p = getProject(),
       selected = b.dataset.take ? Number(b.dataset.index) : null;
+    const editVersion = getEditVersion();
     const next = await api(
       `/api/projects/${p.id}/retakes/${b.dataset.take || b.dataset.keepBoth}`,
       {
@@ -190,7 +192,7 @@ export function createProduction({
         },
       },
     );
-    if (getProject()?.id !== id) return;
+    if (getProject()?.id !== id || getEditVersion() !== editVersion) return;
     applyProject(next);
     toast("Take decision saved.");
   });

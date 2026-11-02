@@ -40,6 +40,7 @@ let dirty = false,
 let conflicted = false,
   pollRunning = false,
   dragging = null,
+  pollTimer = null,
   toastTimer;
 let reviewFile = null;
 let timelineFrame = null;
@@ -77,6 +78,7 @@ const production = createProduction({
   task,
   selectLayer,
   onPreviewUpdate: () => canvas?.refresh(),
+  getEditVersion: () => editSequence,
 });
 canvas = createCanvas({
   stage: $("video-stage"),
@@ -633,6 +635,7 @@ function renderJobs() {
     transcribe: "Transcribing",
     transcription: "Transcribing",
     retakes: "Comparing takes",
+    signal: "Checking audio",
     apply: "Applying edit",
     export: "Exporting",
     prepare: "Preparing video",
@@ -644,7 +647,7 @@ function renderJobs() {
     ? `<span class="spinner"></span>${running[1].status === "queued" ? "Queued" : names[running[1].stage] || names[running[0]]} · ${time(Date.now() / 1000 - (running[1].started_at || running[1].queued_at || Date.now() / 1000), false)}`
     : error
       ? esc(error[1].message)
-      : prepared ? "Ready for edit" : "";
+      : prepared ? (project.preparation_kind === "visual" ? "Ready · no speech" : "Ready for edit") : "";
   $("export-button").disabled = !!running || conflicted || dirty;
   $("plain-export-button").disabled = !!running || conflicted || dirty;
   $("analyze-button").disabled =
@@ -661,9 +664,8 @@ function renderJobs() {
   $("silence-settings").disabled = !!running;
   $("prepare-button").disabled =
     (!!running && !previewOnly()) ||
-    !project.media.has_audio ||
     conflicted ||
-    !health.transcription_ready || !health.whisper_ready;
+    (project.media.has_audio && (!health.transcription_ready || !health.whisper_ready));
 }
 function updateSummary() {
   if (!project) return;
@@ -928,6 +930,7 @@ async function task(kind, plain = false) {
     project = response;
     savedEditable = editable();
     renderProject();
+    schedulePoll(0);
   } catch (error) {
     if (project?.id === id) ownJobs.delete(kind);
     throw error;
@@ -1727,6 +1730,14 @@ async function poll() {
   }
 }
 
+function schedulePoll(delay = busy() ? 250 : 1500) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(async () => {
+    await poll();
+    schedulePoll();
+  }, delay);
+}
+
 await act(async () => {
   health = await api("/api/health");
   await loadProjects();
@@ -1742,4 +1753,4 @@ await act(async () => {
     else $("import-button").textContent = "Import video";
   }
 })();
-setInterval(poll, 1300);
+schedulePoll(0);

@@ -38,7 +38,7 @@ function controls(t, role = "graphic") {
   };
   const visual = { id: "visual", kind: "image", tags: [], name: "visual", description: "", has_audio: false };
   const pop = { id: "pop", kind: "audio", tags: [], name: "pop", description: "", has_audio: true, duration: 1 };
-  let current = project;
+  let current = project, editVersion = 0;
   const applied = [], requests = [];
   createProduction({
     getProject: () => current, applyProject(p) { applied.push(p); },
@@ -50,6 +50,7 @@ function controls(t, role = "graphic") {
     video: { currentTime: 0, paused: true, muted: false, volume: 1, style: {}, addEventListener() {} },
     outputTime: (t) => t, isEdited: () => true, showOriginal() {}, refreshTimeline() {},
     task() {}, selectLayer() {}, onPreviewUpdate() {},
+    getEditVersion: () => editVersion,
   });
   const change = (field, value, pop = false) => elements.get("overlay-list").onchange({
     target: {
@@ -61,6 +62,7 @@ function controls(t, role = "graphic") {
   return {
     project, change,
     applied, requests, switchProject: (p) => { current = p; },
+    editCaption: () => { project.subtitles = [{ id: "human", text: "Keep this" }]; editVersion += 1; },
     choose: () => elements.get("retake-list").onclick({ target: { closest: (selector) => selector === "[data-take],[data-keep-both]" ? { dataset: { take: "group", index: "1" } } : null } }),
     release: () => release({ asset_id: "pop", asset_in: .1, volume: .35, enabled: true }),
   };
@@ -84,6 +86,17 @@ test("a delayed take decision cannot select a different project", async (t) => {
   c.release();
   await pending;
   assert.equal(c.applied.length, 0);
+});
+
+test("a delayed take decision preserves a newer caption edit in the same project", async (t) => {
+  const c = controls(t);
+  const pending = c.choose();
+  await Promise.resolve();
+  c.editCaption();
+  c.release();
+  await pending;
+  assert.equal(c.applied.length, 0);
+  assert.equal(c.project.subtitles[0].text, "Keep this");
 });
 
 test("a delayed pop enable cannot attach sound to a newer Graphic choice", async (t) => {

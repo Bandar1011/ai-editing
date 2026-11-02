@@ -13,7 +13,14 @@ from . import media, story
 from .presets import SPEECH
 
 # Bump only the affected contract when a parser or scoring algorithm changes.
-CONTRACTS = {"transcription": 1, "silence": 1, "speech": 1, "retakes": 1, "prepare": 1}
+CONTRACTS = {
+    "signal": 1,
+    "transcription": 1,
+    "silence": 1,
+    "speech": 1,
+    "retakes": 1,
+    "prepare": 1,
+}
 
 
 def key_for(value):
@@ -44,7 +51,9 @@ def file_identity(path):
 
 
 def tool_identity(name):
-    return file_identity(media.binary(name))
+    from .toolchain import identity
+
+    return identity(media.binary(name), file_identity, key_for)
 
 
 def atomic_json(path, value):
@@ -78,7 +87,18 @@ class Analysis:
         )
 
     def fact(self, stage, dependencies, compute, validate=None):
-        key = key_for({"stage": stage, "schema": CONTRACTS[stage], "dependencies": dependencies})
+        if any(value is None for value in dependencies.values()):
+            started = time.monotonic()
+            self.keys[stage] = None
+            self._event(stage, "running", started)
+            value = compute()
+            if validate:
+                validate(value)
+            self._event(stage, "done", started)
+            return copy.deepcopy(value)
+        key = key_for(
+            {"stage": stage, "schema": CONTRACTS[stage], "dependencies": dependencies}
+        )
         self.keys[stage] = key
         path = self.directory / f"{stage}-{key}.json"
         started = time.monotonic()
@@ -107,21 +127,26 @@ class Analysis:
     def audio(self):
         if self._audio is not None:
             return self._audio
+        decoder = tool_identity("ffmpeg")
         key = key_for(
             {
                 "source": self.source_key,
-                "decoder": tool_identity("ffmpeg"),
+                "decoder": decoder,
                 "format": "default-audio/mono/16000/s16le/v1",
             }
         )
-        self.keys["audio"] = key
+        self.keys["audio"] = key if decoder is not None else None
         wav, manifest = self.working / "speech.wav", self.directory / "audio.json"
         started = time.monotonic()
         try:
             record = json.loads(manifest.read_text())
             if not isinstance(record, dict):
                 raise ValueError("Invalid audio manifest")
-            valid = record["key"] == key and record["sha256"] == file_identity(wav)
+            valid = (
+                decoder is not None
+                and record["key"] == key
+                and record["sha256"] == file_identity(wav)
+            )
             if valid:
                 media.validate_speech_audio(wav)
         except (
@@ -143,7 +168,8 @@ class Analysis:
             media.extract_speech_audio(self.source, temporary)
             media.validate_speech_audio(temporary)
             temporary.replace(wav)
-            atomic_json(manifest, {"key": key, "sha256": file_identity(wav)})
+            if decoder is not None:
+                atomic_json(manifest, {"key": key, "sha256": file_identity(wav)})
         finally:
             temporary.unlink(missing_ok=True)
         self._event("audio", "done", started)
@@ -168,6 +194,8 @@ class Analysis:
             "parser": 1,
             "duration": duration,
         }
+        if any(model.parent.glob("*.mlmodelc")):
+            dependencies["coreml"] = None
 
         def validate(value):
             if (
@@ -190,6 +218,14 @@ class Analysis:
                 wav, self.working, model, language, duration
             ),
             validate,
+        )
+
+    def silent(self):
+        wav = self.audio()
+        return self.fact(
+            "signal",
+            {"audio": self.keys["audio"], "maximum_pcm_sample": 2},
+            lambda: media.digital_silence(wav),
         )
 
     def quiet(self, duration, threshold, minimum, padding):

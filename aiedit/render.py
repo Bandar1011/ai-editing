@@ -9,58 +9,68 @@ from pathlib import Path
 from .timeline import ass_text, entrance_event, kept_ranges, remap_subtitles
 
 
+def font_environment():
+    from . import media
+    from .analysis import file_identity
+    from .toolchain import stamp
+
+    if any(
+        os.environ.get(name)
+        for name in ("FONTCONFIG_FILE", "FONTCONFIG_PATH", "FONTCONFIG_SYSROOT")
+    ):
+        return None
+    font_list, config_list = shutil.which("fc-list"), shutil.which("fc-conflist")
+    if not font_list or not config_list:
+        return None
+    files = {}
+    for name in media.run([font_list, "-f", "%{file}\n"]).splitlines():
+        path = Path(name)
+        if not path.is_file():
+            return None
+        # ctime/inode also detect replacements that retain size/mtime. Font
+        # inventories are large; loading every face's bytes delays first export.
+        files[str(path)] = stamp(path)
+    for line in media.run([config_list]).splitlines():
+        if not line.strip():
+            continue
+        if line[:2] not in {"+ ", "- "} or ": " not in line:
+            return None
+        path = Path(line[2:].split(": ", 1)[0])
+        if not path.is_file():
+            return None
+        files[str(path)] = file_identity(path)
+    # CoreText may use faces outside Fontconfig's listing on macOS.
+    roots = [
+        Path("/System/Library/Fonts"),
+        Path("/Library/Fonts"),
+        Path.home() / "Library/Fonts",
+    ]
+    roots += list(Path("/System/Library/AssetsV2").glob("com_apple_MobileAsset_Font*"))
+    for root in roots:
+        if root.is_dir():
+            for path in root.rglob("*"):
+                if (
+                    path.suffix.lower() in {".ttf", ".ttc", ".otf", ".otc"}
+                    and path.is_file()
+                ):
+                    files[str(path)] = stamp(path)
+    return files or None
+
+
 def render_identity(project, source, burn_subtitles, assets, plain, format):
     """Conservative byte-affecting identity; review metadata never invalidates it."""
     from . import media
     from .analysis import file_identity, key_for, tool_identity
 
+    ffmpeg = tool_identity("ffmpeg")
+    if ffmpeg is None:
+        return None
     fonts = {}
     captioned = burn_subtitles and not plain and project["subtitles"]
     if captioned:
-        if any(
-            os.environ.get(name)
-            for name in ("FONTCONFIG_FILE", "FONTCONFIG_PATH", "FONTCONFIG_SYSROOT")
-        ):
+        fonts = font_environment()
+        if fonts is None:
             return None
-        # libass uses CoreText on macOS and Fontconfig on Linux. Include all
-        # installed fallback faces, not only the requested caption family.
-        roots = [
-            Path("/System/Library/Fonts"),
-            Path("/Library/Fonts"),
-            Path.home() / "Library/Fonts",
-            Path("/usr/share/fonts"),
-            Path("/usr/local/share/fonts"),
-            Path.home() / ".fonts",
-            Path.home() / ".local/share/fonts",
-        ]
-        roots += list(
-            Path("/System/Library/AssetsV2").glob("com_apple_MobileAsset_Font*")
-        )
-        for root in roots:
-            if root.is_dir():
-                for path in root.rglob("*"):
-                    if (
-                        path.suffix.lower() in {".ttf", ".ttc", ".otf", ".otc"}
-                        and path.is_file()
-                    ):
-                        fonts[str(path)] = file_identity(path)
-        if platform.system() != "Darwin":
-            font_list = shutil.which("fc-list")
-            if not font_list:
-                return None
-            for name in media.run([font_list, "-f", "%{file}\n"]).splitlines():
-                path = Path(name)
-                if path.is_file():
-                    fonts[str(path)] = file_identity(path)
-            for root in (Path("/etc/fonts"), Path("/usr/local/etc/fonts")):
-                if root.is_dir():
-                    for path in root.rglob("*.conf"):
-                        if path.is_file():
-                            fonts[str(path)] = file_identity(path)
-        if not fonts:
-            return (
-                None  # Unknown font environment: encode normally instead of guessing.
-            )
     payload = {
         "schema": 1,
         "source": file_identity(source),
@@ -91,7 +101,7 @@ def render_identity(project, source, burn_subtitles, assets, plain, format):
             for name in ("render.py", "timeline.py", "media.py")
         },
         "encoder": media.video_encoding(media.color_info(source)),
-        "ffmpeg": tool_identity("ffmpeg"),
+        "ffmpeg": ffmpeg,
         "fonts": fonts,
         "platform": (platform.system(), platform.release(), platform.machine()),
     }
@@ -252,7 +262,9 @@ def export_video(
                 if overlay.get("height") is not None:
                     box_h = max(2, round(height * overlay["height"] / 2) * 2)
                 x = (width - box_w) // 2
-                center_y = 0.5 if layout == "full" else 0.24 if layout == "top" else 0.67
+                center_y = (
+                    0.5 if layout == "full" else 0.24 if layout == "top" else 0.67
+                )
                 y = round(height * center_y - box_h / 2)
                 if overlay.get("x") is not None:
                     x = round(width * overlay["x"] - box_w / 2)
@@ -264,13 +276,24 @@ def export_video(
                     pad_color = "black@0" if kind == "image" else "0x101312"
                     asset_color = media.color_info(asset["path"])
                     conversion = (
-                        "," + media.graphics_filter(color["color_transfer"], overlay.get("white_nits", 203))
+                        ","
+                        + media.graphics_filter(
+                            color["color_transfer"], overlay.get("white_nits", 203)
+                        )
                         if hdr and not media.is_hdr(asset_color)
                         else ""
                     )
-                    if hdr and media.is_hdr(asset_color) and any(
-                        asset_color.get(key) != color.get(key)
-                        for key in ("color_transfer", "color_primaries", "color_space")
+                    if (
+                        hdr
+                        and media.is_hdr(asset_color)
+                        and any(
+                            asset_color.get(key) != color.get(key)
+                            for key in (
+                                "color_transfer",
+                                "color_primaries",
+                                "color_space",
+                            )
+                        )
                     ):
                         primaries = {"bt2020": "2020", "bt709": "709"}
                         matrices = {"bt2020nc": "2020_ncl", "bt709": "709"}
@@ -283,7 +306,11 @@ def export_video(
                     filters.append(
                         f"[{input_index}:v:0]trim=duration={length:.6f},setpts=PTS-STARTPTS+{span['start']:.6f}/TB,{image_format}scale={box_w}:{box_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={box_w}:{box_h}:(ow-iw)/2:(oh-ih)/2:color={pad_color},setsar=1{conversion}[asset{count}]"
                     )
-                    eof = "eof_action=repeat:repeatlast=1" if kind == "image" else "eof_action=pass:repeatlast=0"
+                    eof = (
+                        "eof_action=repeat:repeatlast=1"
+                        if kind == "image"
+                        else "eof_action=pass:repeatlast=0"
+                    )
                     filters.append(
                         f"[{current}][asset{count}]overlay=x={x}:y={y}:format={overlay_format}:alpha=straight:{eof}:enable='gte(t,{span['start']:.6f})*lt(t,{span['end']:.6f})'[o{count}]"
                     )
@@ -297,11 +324,20 @@ def export_video(
                     overlay_audio.append(label)
                 input_index += 1
             sound = overlay.get("entrance_sound")
-            event = entrance_event(
-                overlay, kept, assets[sound["asset_id"]]["metadata"]["duration"]
-            ) if sound else None
+            event = (
+                entrance_event(
+                    overlay, kept, assets[sound["asset_id"]]["metadata"]["duration"]
+                )
+                if sound
+                else None
+            )
             if event:
-                inputs += ["-ss", f"{event['asset_in']:.6f}", "-i", str(assets[event["asset_id"]]["path"].resolve())]
+                inputs += [
+                    "-ss",
+                    f"{event['asset_in']:.6f}",
+                    "-i",
+                    str(assets[event["asset_id"]]["path"].resolve()),
+                ]
                 length = event["end"] - event["start"]
                 label = f"entrance{count}"
                 filters.append(
@@ -360,7 +396,16 @@ def export_video(
     if burn_subtitles and not plain and cues:
         caption_path = output.with_suffix(".ass")
         caption_path.write_text(
-            ass_text(cues, width, height, dict(project["subtitle_style"], hdr=color.get("color_transfer") if hdr else False)), encoding="utf-8"
+            ass_text(
+                cues,
+                width,
+                height,
+                dict(
+                    project["subtitle_style"],
+                    hdr=color.get("color_transfer") if hdr else False,
+                ),
+            ),
+            encoding="utf-8",
         )
         filters.append(f"[{current}]ass=filename={caption_path.name}[vout]")
     else:
