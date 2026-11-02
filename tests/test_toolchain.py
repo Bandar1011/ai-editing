@@ -1,5 +1,8 @@
 import os
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from aiedit import toolchain
 from aiedit.analysis import Analysis, file_identity, key_for
@@ -93,7 +96,7 @@ def test_active_user_font_alias_and_font_replacement_invalidate_environment(
     monkeypatch.setattr(
         media,
         "run",
-        lambda command: (
+        lambda command, **options: (
             str(font) + "\n"
             if command[0] == "fc-list"
             else "+ " + str(config) + ": User aliases\n"
@@ -108,4 +111,26 @@ def test_active_user_font_alias_and_font_replacement_invalidate_environment(
     os.utime(font, ns=(modified, modified))
     assert key_for(font_environment()) != second
     monkeypatch.setenv("FONTCONFIG_FILE", str(config))
+    assert font_environment() is None
+
+
+@pytest.mark.parametrize("helper", ["fc-list", "fc-conflist"])
+@pytest.mark.parametrize(
+    "failure",
+    [RuntimeError("Unavailable"), OSError("Missing"), subprocess.TimeoutExpired("font-discovery", 5)],
+)
+def test_font_discovery_errors_disable_reuse(helper, failure, tmp_path, monkeypatch):
+    from aiedit import media, render
+
+    font = tmp_path / "face.ttf"
+    font.write_bytes(b"font")
+    monkeypatch.setattr(render.shutil, "which", lambda name: name)
+
+    def discover(command, **options):
+        assert 0 < options["timeout"] <= 10
+        if command[0] == helper:
+            raise failure
+        return str(font) + "\n"
+
+    monkeypatch.setattr(media, "run", discover)
     assert font_environment() is None

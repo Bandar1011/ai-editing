@@ -2,7 +2,7 @@ import hashlib
 
 from fastapi.testclient import TestClient
 
-from aiedit import media
+from aiedit import media, render
 from aiedit.server import create_app
 from test_media_and_api import recording, wait_for  # noqa: F401
 from test_review_workflow import edit_body
@@ -96,3 +96,43 @@ def test_burned_caption_and_corrupt_candidate_require_new_encode(
             hashlib.sha256((folder / third["file"]).read_bytes()).hexdigest()
             == third["sha256"]
         )
+
+
+def test_optional_font_discovery_failure_still_encodes(
+    recording, tmp_path, monkeypatch
+):
+    original_run = media.run
+    original_which = render.shutil.which
+    discovery_calls = []
+
+    def discover(command, **options):
+        if command[0] == "broken-font-discovery":
+            discovery_calls.append(options)
+            raise RuntimeError("Optional font discovery is unavailable")
+        return original_run(command, **options)
+
+    monkeypatch.setattr(
+        render.shutil,
+        "which",
+        lambda name: (
+            "broken-font-discovery"
+            if name in {"fc-list", "fc-conflist"}
+            else original_which(name)
+        ),
+    )
+    monkeypatch.setattr(media, "run", discover)
+    with TestClient(
+        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+    ) as client:
+        editor = client.app.state.editor
+        p = wait_for(editor, editor.create(recording, recording.name)["id"])
+        body = edit_body(p)
+        body["subtitles"] = [
+            {"id": "caption", "start": 0.2, "end": 1, "text": "Still renders"}
+        ]
+        assert client.put(f"/api/projects/{p['id']}", json=body).status_code == 200
+        result = export(client, editor, p["id"])
+        assert not result["render_cache"]["hit"]
+        output = editor.repo.directory(p["id"]) / "exports" / result["file"]
+        assert media.probe(output)["duration"] > 0
+        assert discovery_calls and 0 < discovery_calls[0]["timeout"] <= 10

@@ -693,6 +693,8 @@ def router(editor):
                     if cue["text"] != correction.text:
                         cue["text"] = correction.text
                         current["captions_authored"] = True
+                if options.caption_fixes:
+                    story.split_existing_captions(current["subtitles"])
                 for choice in options.take_choices:
                     if choice.base_revision not in (None, options.base_revision):
                         raise ValueError("Use the same revision for every take choice.")

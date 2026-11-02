@@ -4,12 +4,22 @@ import uuid
 import platform
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from .timeline import ass_text, entrance_event, kept_ranges, remap_subtitles
 
 
 def font_environment():
+    try:
+        return _discover_fonts()
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        # This preflight controls reuse only. Rendering can still use CoreText
+        # when optional Fontconfig discovery is unavailable.
+        return None
+
+
+def _discover_fonts():
     from . import media
     from .analysis import file_identity
     from .toolchain import stamp
@@ -23,14 +33,14 @@ def font_environment():
     if not font_list or not config_list:
         return None
     files = {}
-    for name in media.run([font_list, "-f", "%{file}\n"]).splitlines():
+    for name in media.run([font_list, "-f", "%{file}\n"], timeout=5).splitlines():
         path = Path(name)
         if not path.is_file():
             return None
         # ctime/inode also detect replacements that retain size/mtime. Font
         # inventories are large; loading every face's bytes delays first export.
         files[str(path)] = stamp(path)
-    for line in media.run([config_list]).splitlines():
+    for line in media.run([config_list], timeout=5).splitlines():
         if not line.strip():
             continue
         if line[:2] not in {"+ ", "- "} or ": " not in line:

@@ -432,6 +432,26 @@ def test_editorial_decisions_apply_only_targeted_fields_and_are_atomic(prepared_
     assert current["subtitles"] == after["subtitles"]
 
 
+def test_editorial_long_caption_rejected_without_partial_changes(prepared_client):
+    client, editor, p, _ = prepared_client
+    p = prepare_video(client, editor, p, language="en")
+    response = client.patch(
+        f"/api/projects/{p['id']}/editorial",
+        json={
+            "base_revision": p["revision"],
+            "caption_fixes": [
+                {"id": p["subtitles"][0]["id"], "text": "These are four spoken words"}
+            ],
+            "story": {"topic": "Must roll back"},
+        },
+    )
+    assert response.status_code == 400, response.text
+    current = editor.repo.load(p["id"])
+    assert current["revision"] == p["revision"]
+    assert current["subtitles"] == p["subtitles"]
+    assert current["story"] == p["story"]
+
+
 def test_editorial_take_choices_precede_caption_corrections(prepared_client):
     client, editor, p, _ = prepared_client
     p = prepare_video(client, editor, p, language="en")
