@@ -1,5 +1,5 @@
-import { overlayBox } from "./canvas.mjs?v=factory-5";
-import { entranceEvent, keptRanges } from "./timeline.mjs?v=factory-5";
+import { overlayBox } from "./canvas.mjs?v=factory-6";
+import { entranceEvent, keptRanges } from "./timeline.mjs?v=factory-6";
 export function createProduction({
   getProject,
   applyProject,
@@ -171,7 +171,9 @@ export function createProduction({
     }
     const b = e.target.closest("[data-take],[data-keep-both]");
     if (!b) return;
+    const id = getProject()?.id;
     await saveNow();
+    if (getProject()?.id !== id) return;
     const p = getProject(),
       selected = b.dataset.take ? Number(b.dataset.index) : null;
     const next = await api(
@@ -179,6 +181,7 @@ export function createProduction({
       {
         method: "POST",
         body: {
+          base_revision: p.revision,
           selected,
           reason:
             selected === null
@@ -187,6 +190,7 @@ export function createProduction({
         },
       },
     );
+    if (getProject()?.id !== id) return;
     applyProject(next);
     toast("Take decision saved.");
   });
@@ -304,7 +308,7 @@ export function createProduction({
       body: { url: $("asset-url").value, kind: $("download-kind").value },
     });
     downloadJob = result.id;
-    $("download-status").textContent = "Downloading to your local library…";
+    $("download-status").textContent = result.message || "Queued";
   });
   $("refresh-assets").onclick = act(loadLibrary);
   $("capture-app").onclick = act(async () => {
@@ -317,13 +321,18 @@ export function createProduction({
       },
     });
     downloadJob = result.id;
-    $("download-status").textContent = "Capturing the app on this Mac…";
+    $("download-status").textContent = result.message || "Queued";
   });
   async function pollDownload() {
     if (!downloadJob) return;
     try {
-      const j = await api("/api/assets/jobs/" + downloadJob);
-      if (j.status === "running") return;
+      const id = downloadJob;
+      const j = await api("/api/assets/jobs/" + id);
+      if (downloadJob !== id) return;
+      if (j.status === "queued" || j.status === "running") {
+        $("download-status").textContent = j.message || j.status;
+        return;
+      }
       downloadJob = null;
       $("download-status").textContent =
         j.status === "done" ? "Download ready." : j.message;

@@ -233,10 +233,14 @@ class Editor:
             os.environ.get("AIEDIT_MODEL", directory / "models" / "ggml-base.bin")
         )
         self.vad_model = Path(
-            os.environ.get("AIEDIT_VAD_MODEL", directory / "models" / "ggml-silero-v6.2.0.bin")
+            os.environ.get(
+                "AIEDIT_VAD_MODEL", directory / "models" / "ggml-silero-v6.2.0.bin"
+            )
         )
         self.active: set[str] = set()
         self.job_lock = threading.Lock()
+        self.inflight = {}
+        self.job_context = threading.local()
 
     def create(self, source: Path, filename: str) -> dict:
         extension = Path(filename).suffix.lower()
@@ -278,47 +282,161 @@ class Editor:
         self.submit(identifier, "preview", self.preview)
         return self.repo.load(identifier)
 
-    def submit(self, identifier: str, kind: str, worker, *args) -> dict:
-        with self.job_lock:
-            if identifier in self.active:
-                raise HTTPException(409, "Wait for the current operation to finish.")
-            self.active.add(identifier)
-        self.repo.change(
-            identifier,
-            lambda p: p["jobs"].update(
-                {
-                    kind: {
-                        "status": "running",
-                        "message": "Working…",
-                        "started_at": time.time(),
-                    }
+    def submit(
+        self,
+        identifier: str,
+        kind: str,
+        worker,
+        *args,
+        after_preview=False,
+        request_key=None,
+    ) -> dict:
+        with self.repo.lock(identifier):
+            self.repo.load(identifier)
+            job_id = uuid.uuid4().hex
+            predecessor = None
+            with self.job_lock:
+                pending = self.inflight.get(identifier, {})
+                for entry in pending.values():
+                    if (
+                        request_key
+                        and entry["kind"] == kind
+                        and entry["request_key"] == request_key
+                    ):
+                        return self.repo.load(identifier)
+                if pending:
+                    if not (
+                        after_preview
+                        and len(pending) == 1
+                        and next(iter(pending.values()))["kind"] == "preview"
+                    ):
+                        raise HTTPException(
+                            409, "Wait for the current operation to finish."
+                        )
+                    predecessor = next(iter(pending))
+                self.inflight.setdefault(identifier, {})[job_id] = {
+                    "kind": kind,
+                    "request_key": request_key,
                 }
-            ),
-        )
-
-        def execute():
+                self.active.add(identifier)
             try:
-                worker(identifier, *args)
                 self.repo.change(
                     identifier,
-                    lambda p: p["jobs"][kind].update(
-                        status="done", message="Complete", finished_at=time.time()
+                    lambda p: p["jobs"].update(
+                        {
+                            kind: {
+                                "id": job_id,
+                                "request_key": request_key,
+                                "status": "queued",
+                                "stage": "queued",
+                                "message": "Waiting for the media worker",
+                                "queued_at": time.time(),
+                                "started_at": None,
+                                "stages": [],
+                            }
+                        }
                     ),
                 )
-            except Exception as exc:
-                message = str(exc.detail if isinstance(exc, HTTPException) else exc)
-                self.repo.change(
-                    identifier,
-                    lambda p: p["jobs"][kind].update(
-                        status="error", message=message[-1800:], finished_at=time.time()
-                    ),
-                )
-            finally:
-                with self.job_lock:
-                    self.active.discard(identifier)
+            except Exception:
+                self._release_job(identifier, job_id)
+                raise
 
-        self.pool.submit(execute)
-        return self.repo.load(identifier)
+            def mutate_job(change):
+                def update(project):
+                    job = project["jobs"].get(kind, {})
+                    if job.get("id") != job_id:
+                        raise ValueError(
+                            "This operation was replaced by a newer request."
+                        )
+                    change(job)
+
+                return self.repo.change(identifier, update)
+
+            def execute():
+                self.job_context.current = (identifier, kind, job_id)
+                try:
+                    now = time.time()
+                    mutate_job(
+                        lambda j: j.update(
+                            status="running",
+                            stage=kind,
+                            message="Working",
+                            started_at=now,
+                            queue_seconds=round(now - j["queued_at"], 4),
+                        )
+                    )
+                    if predecessor:
+                        prior = self.repo.load(identifier)["jobs"].get("preview", {})
+                        if (
+                            prior.get("id") != predecessor
+                            or prior.get("status") != "done"
+                        ):
+                            raise ValueError(
+                                "Preparation stopped because the video preview failed. Retry the preview first."
+                            )
+                    worker(identifier, *args)
+                    finished = time.time()
+                    mutate_job(
+                        lambda j: j.update(
+                            status="done",
+                            stage="done",
+                            message="Complete",
+                            finished_at=finished,
+                            seconds=round(finished - j["started_at"], 4),
+                        )
+                    )
+                except Exception as exc:
+                    message = str(exc.detail if isinstance(exc, HTTPException) else exc)
+                    mutate_job(
+                        lambda j: j.update(
+                            status="error",
+                            message=message[-1800:],
+                            finished_at=time.time(),
+                        )
+                    )
+                finally:
+                    self.job_context.current = None
+                    self._release_job(identifier, job_id)
+
+            try:
+                self.pool.submit(execute)
+            except Exception:
+                self._release_job(identifier, job_id)
+                mutate_job(
+                    lambda j: j.update(
+                        status="error",
+                        message="The media worker is unavailable.",
+                        finished_at=time.time(),
+                    )
+                )
+                raise
+            return self.repo.load(identifier)
+
+    def _release_job(self, identifier, job_id):
+        with self.job_lock:
+            pending = self.inflight.get(identifier, {})
+            pending.pop(job_id, None)
+            if not pending:
+                self.inflight.pop(identifier, None)
+                self.active.discard(identifier)
+
+    def progress(self, identifier, stage, status, reused=False, seconds=0):
+        context = getattr(self.job_context, "current", None)
+        if not context or context[0] != identifier:
+            return
+        _, kind, job_id = context
+
+        def update(project):
+            job = project["jobs"].get(kind, {})
+            if job.get("id") != job_id:
+                return
+            job.update(stage=stage, message=stage)
+            if status == "done":
+                job["stages"].append(
+                    {"stage": stage, "reused": reused, "seconds": seconds}
+                )
+
+        self.repo.change(identifier, update)
 
     def source(self, project: dict) -> Path:
         return self.repo.directory(project["id"]) / project["source_file"]
@@ -326,7 +444,14 @@ class Editor:
     def preview(self, identifier: str):
         p = self.repo.load(identifier)
         folder = self.repo.directory(identifier) / "working"
-        media.make_proxy(self.source(p), folder, p["media"]["has_audio"])
+        media.make_proxy(
+            self.source(p),
+            folder,
+            p["media"]["has_audio"],
+            on_video_ready=lambda: self.repo.change(
+                identifier, lambda current: current.update(media_ready=True)
+            ),
+        )
         self.repo.change(
             identifier,
             lambda p: p.update(
@@ -360,36 +485,43 @@ class Editor:
 
         self.repo.change(identifier, update)
 
-    def transcribe(self, identifier: str, language: str):
-        p = self.repo.load(identifier)
-        working = self.repo.directory(identifier) / "working"
-        cues = media.transcribe(self.source(p), working, self.model, language)
-        duration = p["media"]["duration"]
-        cues = [
-            dict(
-                c, start=max(0, min(duration, c["start"])), end=min(duration, c["end"])
-            )
-            for c in cues
-            if min(duration, c["end"]) - c["start"] >= 0.02
-        ]
-        transcript = {
-            "language": language,
-            "source_file": p["filename"],
-            "created_at": time.time(),
-            "cues": cues,
-        }
-        word_file = working / "word-transcript.json"
-        if word_file.is_file():
-            transcript.update(json.loads(word_file.read_text()))
-            cues = story.short_captions(
-                transcript["words"], max_words=p["subtitle_style"]["max_words"]
-            )
-        (working / "transcript.json").write_text(
-            json.dumps(transcript, ensure_ascii=False, indent=2) + "\n"
+    def analysis(self, identifier):
+        from .analysis import Analysis
+
+        project = self.repo.load(identifier)
+        analysis = Analysis(
+            self.source(project),
+            self.repo.directory(identifier) / "working",
+            lambda **event: self.progress(identifier, **event),
         )
+        if (
+            project.get("source_sha256")
+            and analysis.source_key != project["source_sha256"]
+        ):
+            raise ValueError(
+                "The original media changed outside the editor. Import it as a new video."
+            )
+        return analysis
+
+    def read_transcript(self, identifier: str, language: str, analysis=None):
+        project = self.repo.load(identifier)
+        transcript = (analysis or self.analysis(identifier)).transcript(
+            self.model, language, project["media"]["duration"]
+        )
+        transcript = dict(transcript, source_file=project["filename"])
+        working = self.repo.directory(identifier) / "working"
+        from .analysis import atomic_json
+
+        atomic_json(working / "word-transcript.json", transcript)
+        atomic_json(working / "transcript.json", transcript)
+        return transcript
+
+    def transcribe(self, identifier: str, language: str):
+        before = self.repo.load(identifier)
+        transcript = self.read_transcript(identifier, language)
 
         def update(project):
-            if project["subtitles"] != p["subtitles"]:
+            if project["subtitles"] != before["subtitles"]:
                 raise ValueError(
                     "Captions changed during transcription. Your edits were preserved; the new transcript is saved in working/transcript.json."
                 )
@@ -400,7 +532,7 @@ class Editor:
                         max_words=project["subtitle_style"]["max_words"],
                     )
                     if transcript.get("words")
-                    else cues
+                    else transcript["cues"]
                 ),
                 transcript=transcript,
                 captions_authored=False,
@@ -423,14 +555,27 @@ class Editor:
             if resolved_assets is not None
             else (self.library.resolve(snapshot) if not plain else {})
         )
-        output = media.export_video(
-            snapshot,
-            self.source(snapshot),
-            self.repo.directory(identifier) / "exports",
-            burn_subtitles and snapshot["subtitle_style"]["enabled"],
-            resolved_assets,
-            plain,
-            format,
+        from .render import render_identity, reuse_export
+
+        burn = burn_subtitles and snapshot["subtitle_style"]["enabled"]
+        directory = self.repo.directory(identifier) / "exports"
+        key = render_identity(
+            snapshot, self.source(snapshot), burn, resolved_assets, plain, format
+        )
+        cached = reuse_export(snapshot, directory, key)
+        self.progress(identifier, stage="export", status="running")
+        output = (
+            cached[0]
+            if cached
+            else media.export_video(
+                snapshot,
+                self.source(snapshot),
+                directory,
+                burn,
+                resolved_assets,
+                plain,
+                format,
+            )
         )
         kept = kept_ranges(snapshot["media"]["duration"], snapshot["cuts"])
         version = len(snapshot["exports"]) + 1
@@ -488,6 +633,11 @@ class Editor:
                 else []
             ),
             "retakes": snapshot.get("retakes", []),
+            "render_cache": {
+                "key": key,
+                "hit": bool(cached),
+                "reused_from": cached[1] if cached else None,
+            },
         }
         output.with_suffix(".srt").write_text(
             srt_text(remap_subtitles(snapshot["subtitles"], kept)), encoding="utf-8"
@@ -506,11 +656,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         # A killed render must not leave the UI showing an eternal running job.
         for summary in editor.repo.list():
             p = editor.repo.load(summary["id"])
-            if any(j["status"] == "running" for j in p["jobs"].values()):
+            if any(j["status"] in {"queued", "running"} for j in p["jobs"].values()):
 
                 def interrupted(project):
                     for job in project["jobs"].values():
-                        if job["status"] == "running":
+                        if job["status"] in {"queued", "running"}:
                             job.update(
                                 status="error",
                                 message="Interrupted when the editor stopped. Run the operation again.",
@@ -594,6 +744,107 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/projects/{identifier}")
     def project(identifier: str):
         return editor.repo.load(identifier)
+
+    @app.get("/api/projects/{identifier}/status")
+    def project_status(identifier: str):
+        p = editor.repo.load(identifier)
+        return {
+            "id": p["id"],
+            "revision": p["revision"],
+            "jobs": p["jobs"],
+            "media_ready": p["media_ready"],
+            "waveform_ready": p["waveform_ready"],
+            "latest_export": p["exports"][-1]["file"] if p["exports"] else None,
+        }
+
+    @app.get("/api/projects/{identifier}/context")
+    def editorial_context(identifier: str, start: float = 0, end: float | None = None):
+        p = editor.repo.load(identifier)
+        duration = p["media"]["duration"]
+        if end is not None and not math.isfinite(end):
+            raise ValueError("Choose a finite source-time window.")
+        end = min(duration, start + 60, end if end is not None else duration)
+        if (
+            not math.isfinite(start)
+            or not math.isfinite(end)
+            or not 0 <= start < end <= duration
+        ):
+            raise ValueError("Choose a source-time window inside the video.")
+        overlaps = lambda item: item["start"] < end and item["end"] > start
+        source_words = [
+            w for w in p.get("transcript", {}).get("words", []) if overlaps(w)
+        ]
+        if len(source_words) > 1000:
+            end = source_words[999]["end"]
+            source_words = source_words[:1000]
+        captions = [c for c in p["subtitles"] if overlaps(c)]
+        retakes = [r for r in p["retakes"] if any(overlaps(t) for t in r["takes"])]
+        assets = editor.library.list()
+        topic = p["story"].get("topic", "")
+        feedback = []
+        for summary in editor.repo.list()[:25]:
+            for note in editor.repo.load(summary["id"])["reviews"]:
+                if note["scope"] == "reusable":
+                    feedback.append(
+                        {k: note[k] for k in ("change", "reason", "created_at")}
+                    )
+        return {
+            "id": identifier,
+            "base_revision": p["revision"],
+            "time_basis": "Seconds on the original source; cuts remove intervals.",
+            "window": {
+                "start": start,
+                "end": end,
+                "next_start": end if end < duration else None,
+            },
+            "media": p["media"],
+            "jobs": p["jobs"],
+            "brief": p["brief"],
+            "story": p["story"],
+            "source_words": source_words,
+            "captions": captions,
+            "cuts": [c for c in p["cuts"] if overlaps(c)],
+            "retakes": retakes[:10],
+            "retakes_truncated": len(retakes) > 10,
+            "caption_review": [w for w in source_words if w.get("confidence", 1) < 0.7][
+                :40
+            ],
+            "overlays": [o for o in p["overlays"] if overlaps(o)],
+            "assets": [
+                {
+                    k: a.get(k)
+                    for k in (
+                        "id",
+                        "name",
+                        "kind",
+                        "description",
+                        "tags",
+                        "source_url",
+                        "rights",
+                    )
+                }
+                for a in assets[:30]
+            ],
+            "assets_truncated": len(assets) > 30,
+            "reusable_feedback": sorted(
+                feedback, key=lambda n: n["created_at"], reverse=True
+            )[:10],
+            "hooks": editor.hooks.suggest(topic),
+            "agent_tasks": [
+                "Choose title wording",
+                "Correct subtitles faithfully",
+                "Choose and place real B-roll",
+                "Review uncertain takes using audio and frames",
+            ],
+            "code_tasks": [
+                "Speech detection and hard cuts",
+                "Caption grouping and approved typography",
+                "Source-time mapping and reference pop",
+                "Preview, local encoding and immutable export",
+            ],
+            "save_route": f"/api/projects/{identifier}",
+            "latest_export": p["exports"][-1]["file"] if p["exports"] else None,
+        }
 
     @app.put("/api/projects/{identifier}")
     def save_project(identifier: str, edit: Edit):

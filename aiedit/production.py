@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -16,7 +17,8 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import media, story
+from . import story
+from .analysis import CONTRACTS, key_for
 from .assets import valid_url
 from .presets import CAPTIONS, REFERENCE_SOUND, SPEECH
 from .timeline import kept_ranges, validate_intervals
@@ -87,6 +89,7 @@ class PrepareOptions(Strict):
 
 
 class TakeDecision(Strict):
+    base_revision: int | None = Field(default=None, ge=1)
     selected: int | None = Field(default=None, ge=0, le=1)
     reason: str = Field(min_length=1, max_length=2000)
 
@@ -170,84 +173,93 @@ def merge_automatic(cuts):
 
 def prepare(editor, identifier, options):
     before = editor.repo.load(identifier)
-    if before["subtitles"] and before.get("transcript"):
-        # Human corrections are never silently replaced by the one-click workflow.
-        generated = story.short_captions(
-            before["transcript"].get("words", []),
-            before["cuts"],
-            before["media"]["duration"],
+    if (
+        before["subtitles"]
+        and before.get("captions_authored", True)
+        and not before.get("preparation_key")
+    ):
+        raise ValueError(
+            "This project already has captions. Use the explicit Generate action to replace them, or prepare a new clip."
         )
-        if before["subtitles"] != generated and before.get("captions_authored", True):
-            raise ValueError(
-                "This project already has captions. Use the explicit Generate action to replace them, or prepare a new clip."
-            )
-    editor.transcribe(identifier, options.language)
-    p = editor.repo.load(identifier)
-    words = p["transcript"].get("words", [])
+    analysis = editor.analysis(identifier)
+    transcript = editor.read_transcript(identifier, options.language, analysis=analysis)
+    words = transcript.get("words", [])
     if not words:
         raise ValueError("Generate a word-timed transcript before preparing this cut.")
-    duration = p["media"]["duration"]
+    duration = before["media"]["duration"]
     warnings = []
-    try:
-        quiet = media.detect_silence(
-            editor.source(p), duration, SPEECH["threshold_db"], options.minimum_pause, options.padding
-        )
-    except ValueError as exc:
-        if "whole recording" not in str(exc):
-            raise
-        quiet = []
+    quiet_result = analysis.quiet(
+        duration, SPEECH["threshold_db"], options.minimum_pause, options.padding
+    )
+    quiet = quiet_result["cuts"]
+    if quiet_result["whole_recording_quiet"]:
         warnings.append(
             "The amplitude threshold marked the whole clip quiet; only recognized speech gaps were used."
         )
     regions = None
     if editor.vad_model.is_file():
-        regions = media.speech_regions(
-            editor.repo.directory(identifier) / "working" / "speech.wav",
-            editor.vad_model, options.padding,
-        )
+        regions = analysis.regions(editor.vad_model, options.padding)
         gaps = story.activity_gap_cuts(regions, duration, options.minimum_pause)
     else:
         gaps = story.speech_gap_cuts(
-            p["transcript"].get("cues", []), duration, options.minimum_pause, options.padding,
+            transcript.get("cues", []), duration, options.minimum_pause, options.padding
         )
-        warnings.append("Speech detection is not installed; pause cuts use amplitude and transcript gaps.")
+        warnings.append(
+            "Speech detection is not installed; pause cuts use amplitude and transcript gaps."
+        )
     fillers = story.filler_cuts(words) if options.remove_fillers else []
-    candidates = (
-        story.retake_candidates(
-            words, lambda a, b: media.audio_quality(editor.source(p), a, b)
-        )
-        if options.choose_retakes
-        else []
+    candidates = analysis.retakes(words) if options.choose_retakes else []
+    signature = key_for(
+        {
+            "schema": CONTRACTS["prepare"],
+            "source": analysis.source_key,
+            "transcript": transcript,
+            "analysis": analysis.keys,
+            "options": options.model_dump(),
+            "vad": editor.vad_model.is_file(),
+        }
     )
-
-    def update(current):
-        if current["subtitles"] != p["subtitles"]:
+    editor.progress(identifier, stage="apply", status="running")
+    with editor.repo.lock(identifier):
+        current = editor.repo.load(identifier)
+        # An identical completed request must not regroup approved text or reset edits.
+        if current.get("preparation_key") == signature:
+            return
+        if current["subtitles"] != before["subtitles"]:
             raise ValueError(
                 "Captions changed during preparation. Your corrections were preserved."
             )
-        decisions = story.preserve_take_decisions(candidates, current["retakes"])
-        max_words = (
-            options.max_words
-            if current["subtitle_style"]["max_words"]
-            == before["subtitle_style"]["max_words"]
-            else current["subtitle_style"]["max_words"]
-        )
-        current["subtitle_style"]["max_words"] = max_words
-        cuts = preserve_manual(
-            quiet + gaps + fillers + story.retake_cuts(decisions), current["cuts"]
-        )
-        current.update(
-            cuts=cuts,
-            retakes=decisions,
-            subtitles=story.short_captions(words, cuts, duration, max_words),
-            captions_authored=False,
-            preparation=dict(options.model_dump(), max_words=max_words),
-            preparation_warnings=warnings,
-            analysis_cuts=merge_automatic(quiet + gaps + fillers),
-            speech_regions=regions,
-        )
+        if current["subtitles"] and current.get("captions_authored", True):
+            raise ValueError(
+                "This project already has captions. Use the explicit Generate action to replace them, or prepare a new clip."
+            )
 
-    editor.repo.change(identifier, update)
+        def update(current):
+            decisions = story.preserve_take_decisions(candidates, current["retakes"])
+            max_words = (
+                options.max_words
+                if current["subtitle_style"]["max_words"]
+                == before["subtitle_style"]["max_words"]
+                else current["subtitle_style"]["max_words"]
+            )
+            current["subtitle_style"]["max_words"] = max_words
+            cuts = preserve_manual(
+                quiet + gaps + fillers + story.retake_cuts(decisions), current["cuts"]
+            )
+            current.update(
+                cuts=cuts,
+                retakes=decisions,
+                subtitles=story.short_captions(words, cuts, duration, max_words),
+                transcript=transcript,
+                captions_authored=False,
+                preparation=dict(options.model_dump(), max_words=max_words),
+                preparation_key=signature,
+                preparation_warnings=warnings,
+                analysis_cuts=merge_automatic(quiet + gaps + fillers),
+                speech_regions=regions,
+            )
+
+        editor.repo.change(identifier, update)
 
 
 def normalize_overlays(current, submitted, library):
@@ -333,17 +345,20 @@ def router(editor):
         config = json.loads(settings_path.read_text())
         job_id = uuid.uuid4().hex[:12]
         with download_lock:
-            if any(j["status"] == "running" for j in downloads.values()):
+            if any(j["status"] in {"queued", "running"} for j in downloads.values()):
                 raise HTTPException(
                     409, "Wait for the current asset operation to finish."
                 )
             downloads[job_id] = {
                 "id": job_id,
-                "status": "running",
-                "message": "Capturing the app on this Mac…",
+                "status": "queued",
+                "queued_at": time.time(),
+                "message": "Waiting for the media worker",
             }
 
         def execute():
+            with download_lock:
+                downloads[job_id].update(status="running", started_at=time.time(), message="Capturing the app on this Mac")
             try:
                 root = Path(config["cache_root"]).expanduser() / "Captures"
                 root.mkdir(parents=True, exist_ok=True)
@@ -405,7 +420,7 @@ def router(editor):
             except Exception as exc:
                 result = {"id": job_id, "status": "error", "message": str(exc)[-1800:]}
             with download_lock:
-                downloads[job_id] = result
+                downloads[job_id].update(result, finished_at=time.time())
 
         editor.pool.submit(execute)
         return downloads[job_id]
@@ -423,11 +438,13 @@ def router(editor):
         valid_url(options.url)
         job_id = uuid.uuid4().hex[:12]
         with download_lock:
-            if any(j["status"] == "running" for j in downloads.values()):
+            if any(j["status"] in {"queued", "running"} for j in downloads.values()):
                 raise HTTPException(409, "Wait for the current download to finish.")
-            downloads[job_id] = {"id": job_id, "status": "running"}
+            downloads[job_id] = {"id": job_id, "status": "queued", "queued_at": time.time(), "message": "Waiting for the media worker"}
 
         def execute():
+            with download_lock:
+                downloads[job_id].update(status="running", started_at=time.time(), message="Downloading to your local library")
             try:
                 asset = editor.library.fetch(
                     options.url, options.kind, options.tags, options.rights
@@ -436,7 +453,7 @@ def router(editor):
             except Exception as exc:
                 result = {"id": job_id, "status": "error", "message": str(exc)[-1500:]}
             with download_lock:
-                downloads[job_id] = result
+                downloads[job_id].update(result, finished_at=time.time())
 
         editor.pool.submit(execute)
         return downloads[job_id]
@@ -486,14 +503,33 @@ def router(editor):
         p = editor.repo.load(identifier)
         if not p["media"]["has_audio"]:
             raise ValueError("This video has no speech track.")
+
+        def run(identifier):
+            if not editor.repo.load(identifier)["media_ready"]:
+                editor.progress(identifier, stage="preview", status="running")
+                editor.preview(identifier)
+            prepare(editor, identifier, options)
+
         return editor.submit(
-            identifier, "prepare", lambda i: prepare(editor, i, options)
+            identifier,
+            "prepare",
+            run,
+            after_preview=True,
+            request_key=key_for(options.model_dump()),
         )
 
     @api.post("/api/projects/{identifier}/retakes/{retake_id}")
     def choose_take(identifier: str, retake_id: str, options: TakeDecision):
         with editor.repo.lock(identifier):
             p = editor.repo.load(identifier)
+            if (
+                options.base_revision is not None
+                and options.base_revision != p["revision"]
+            ):
+                raise HTTPException(
+                    409,
+                    "The project changed. Read the latest take choices before saving.",
+                )
             candidate = next((c for c in p["retakes"] if c["id"] == retake_id), None)
             if not candidate:
                 raise HTTPException(404, "Retake group not found.")

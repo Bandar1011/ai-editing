@@ -1,6 +1,6 @@
 # Minimal reel workflow
 
-The chat agent directs the edit. Local tools execute it and the browser keeps every decision reviewable. A source clip is never modified or published automatically.
+The connected assistant makes editorial decisions. The local application runs the repeated preparation and export steps, and the browser keeps each decision reviewable. A source clip is never modified or published automatically. Use one workflow: import, Prepare video, editorial decisions, live preview, export.
 
 Read [editor.md](../editor.md) for editing instructions. [AGENTS.md](../AGENTS.md) covers engineering work; this document supplies commands and API examples.
 
@@ -12,19 +12,20 @@ The style reference is [Aiden Johnston's reel](https://www.instagram.com/reel/De
 
 ```sh
 python3 scripts/editor.py import /absolute/path/clip.mp4
-python3 scripts/editor.py get PROJECT_ID
-python3 scripts/editor.py prepare PROJECT_ID --language auto --max-words 3
+python3 scripts/editor.py prepare PROJECT_ID --language auto --max-words 3 --wait
+python3 scripts/editor.py context PROJECT_ID --start 60
 ```
 
-Wait for the preview job before preparing; poll `get` until the preparation job is `done`. Preparation:
+Prepare can queue once behind the initial preview. The same pending request returns the same job; a conflicting operation returns 409. `--wait` follows that job and returns the first editorial context window when it completes. `context` returns at most 60 source seconds with `window.next_start` for continuation. `status PROJECT_ID` reads compact queue/stage state without fetching old export snapshots. A normal browser upload can be followed immediately by Prepare video. Preparation:
 
 - Runs the installed whisper.cpp engine with DTW alignment and flash attention disabled. The model's word boundaries are estimates to review against the audio.
+- Reuses complete source-derived PCM, recognition, silence/VAD and retake artifacts when their dependencies match. Language/model/tool or relevant analysis settings invalidate the affected stage. Changing caption grouping does not rerun recognition. Incomplete/corrupt artifacts are recomputed; a processing failure never applies a partial edit. Raw analysis is separate from editable captions and project snapshots.
 - Keeps the raw, source-timed transcript and word confidence separate from captions.
 - Groups captions into 1–3 words without crossing cut boundaries. It preserves the spoken language; uppercase styling leaves Arabic intact.
 - Uses the optional local Silero detector (`uv run python scripts/setup_vad.py`) plus 16 kHz mono quiet-interval analysis. Defaults retain 25 ms around speech and remove pauses of at least 120 ms. Without that model, preparation reports its fallback to recognition gaps. Breaths can still trigger speech activity; inspect waveforms and review every join. Missing/incorrect recognition can create bad cuts.
 - Removes isolated hesitation utterances such as “um”; meaningful words such as “like” are not globally stripped.
 - Finds nearby repeated utterances and unfinished matching starts. It compares completeness, recognition confidence, filler count, and clipping. Clear exact retries can be selected automatically. Changed wording, ties, and uncertain delivery remain for the agent or user to compare.
-- Preserves manual cuts and restored sections. Existing human-caption edits require the explicit Generate action before replacement.
+- Preserves manual cuts, restored sections and reviewed take decisions. An identical completed preparation leaves later human edits intact. Changed preparation settings cannot overwrite authored captions; use the explicit Generate action to replace them.
 
 Choose a take after listening and inspecting the shot:
 
@@ -112,7 +113,7 @@ Simulator visuals do not establish real Screen Time enforcement, purchases, or p
 
 ## Minimal composition
 
-Use [the title-writing skill](../skills/reel-titles/SKILL.md) to choose a faithful opening and compare it with the user's profile. Use a large top title for 2–3 seconds, matching the joined rounded white line backgrounds in [the user's title reference](https://www.tiktok.com/@bandar_h0/video/7661398997373930772). The selected font is Geeza Pro Regular, available on this Mac. The original published video's font metadata is unavailable; its Arabic letterforms were compared visually against installed fonts. Keep the spoken language. Generate a transparent card locally, then import it as an image overlay:
+Use [the title-writing skill](../skills/reel-titles/SKILL.md), the saved profile analysis and relevant hook performance to choose a faithful opening. Revisit the profile only for a requested new style reference or updated performance research. Use a large top title for 2–3 seconds, matching the joined rounded white line backgrounds in [the user's title reference](https://www.tiktok.com/@bandar_h0/video/7661398997373930772). The selected font is Geeza Pro Regular, available on this Mac. The original published video's font metadata is unavailable; its Arabic letterforms were compared visually against installed fonts. Keep the spoken language. Generate a transparent card locally, then import it as an image overlay:
 
 ```sh
 uv run scripts/title_card.py /absolute/private/path/title.png --line "First line" --line "Second line"
@@ -137,11 +138,10 @@ Inspect the real shot before placing a reference. Pointing and gaze indicate whe
 
 The browser edits one 9:16 vertical video. A fresh clip shows only video and original audio. Captions, overlays, effects, music, and added audio each get one track only while they have content. The timeline closes removed gaps. Click a clip, position the playhead, and use **Split** (⌘B), then **Delete** to remove a piece. Drag a clip edge to trim or extend it into available source footage; double-click an edge to restore it. **Restore full video** resets trimming and splits; undo restores the prior edit. Source media and source-timed captions and overlays remain unchanged. Split seams are persisted as `split_points` on the source, separately from the removal ranges in `cuts`. Panels open only when needed; the editor has no project picker or Edited/Original switch.
 
-Browser exports pass `format: "vertical"`, producing an exact 9:16 center crop and retaining source resolution and frame rate. Direct API calls default to `format: "source"` for compatibility; the CLI accepts `--format vertical`. Review the crop before exporting, especially for wide footage. Preserve HLG/PQ color transfer and 10-bit depth in HEVC; do not automatically tone-map or add punch-ins. SDR graphics use 203-nit white in HDR without grading the underlying footage. A compatible HDR player/display is needed for faithful playback.
+Browser exports pass `format: "vertical"`, producing an exact 9:16 center crop at the source resolution and probed frame rate. The existing encoder uses that rate as constant output cadence, including for variable-rate sources; this optimization does not change that behavior. Direct API calls default to `format: "source"` for compatibility; the CLI accepts `--format vertical`. Review the crop before exporting, especially for wide footage. Preserve HLG/PQ color transfer and 10-bit depth in HEVC; do not automatically tone-map or add punch-ins. SDR graphics use 203-nit white in HDR without grading the underlying footage. A compatible HDR player/display is needed for faithful playback.
 
 ```sh
-python3 scripts/editor.py export PROJECT_ID --format vertical --plain --label "Story review"
-python3 scripts/editor.py export PROJECT_ID --format vertical --label "Captioned review"
+python3 scripts/editor.py export PROJECT_ID --format vertical --label "Final review" --wait
 ```
 
-Plain exports omit captions, overlays, punch-ins, and music. Final candidates freeze production decisions, asset provenance, captions, source ranges, and output checksums. Review the encoded file for missing words, bad joins, caption collisions, incorrect app screens, and audio balance. Save specific corrections against that export.
+Review revisions in the browser without an export. Use `--plain` only for a requested or useful comparison; it omits captions, overlays, punch-ins, and music. Identical effective exports reuse verified MP4 bytes, excluding labels and project revisions from the render identity, while writing a fresh independent snapshot and SRT. Missing or corrupt cached exports are rendered again. Final candidates freeze production decisions, asset provenance, captions, source ranges, and output checksums. Review the encoded file for missing words, bad joins, caption collisions, incorrect app screens, and audio balance. Save specific corrections against that export.

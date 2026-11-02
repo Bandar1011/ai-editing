@@ -157,7 +157,11 @@ def test_versions_preserve_captions_ranges_provenance_and_feedback(recording, tm
 
 def test_source_transcript_survives_caption_edits(recording, tmp_path, monkeypatch):
     cues = [{"id": "original", "start": 0.5, "end": 2, "text": "Words actually spoken"}]
-    monkeypatch.setattr(media, "transcribe", lambda *args: copy.deepcopy(cues))
+    from aiedit.server import Editor
+
+    monkeypatch.setattr(
+        Editor, "read_transcript", lambda *args, **kwargs: {"cues": copy.deepcopy(cues)}
+    )
     with TestClient(
         create_app(tmp_path / "data"), base_url="http://127.0.0.1"
     ) as client:
@@ -182,15 +186,22 @@ def test_transcription_cannot_replace_concurrent_human_correction(
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
         manual = [{"id": "human", "start": 0.2, "end": 1, "text": "Keep my correction"}]
 
-        def transcribe(*args):
+        def transcribe(*args, **kwargs):
             editor.repo.change(
                 p["id"], lambda project: project.update(subtitles=manual)
             )
-            return [
-                {"id": "generated", "start": 0.2, "end": 1, "text": "Generated text"}
-            ]
+            return {
+                "cues": [
+                    {
+                        "id": "generated",
+                        "start": 0.2,
+                        "end": 1,
+                        "text": "Generated text",
+                    }
+                ]
+            }
 
-        monkeypatch.setattr(media, "transcribe", transcribe)
+        monkeypatch.setattr(editor, "read_transcript", transcribe)
         with pytest.raises(ValueError, match="preserved"):
             editor.transcribe(p["id"], "en")
         assert editor.repo.load(p["id"])["subtitles"] == manual

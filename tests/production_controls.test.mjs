@@ -31,16 +31,21 @@ function controls(t, role = "graphic") {
   let release;
   const pending = new Promise((resolve) => { release = resolve; });
   const project = {
-    id: "test", media: { duration: 5 }, cuts: [],
+    id: "test", revision: 7, media: { duration: 5 }, cuts: [],
     overlays: [{ id: "ref", asset_id: "visual", role, entrance_sound: null,
       start: 1, end: 4, enabled: true }],
     punches: [], retakes: [], music: null, subtitles: [], subtitle_style: {},
   };
   const visual = { id: "visual", kind: "image", tags: [], name: "visual", description: "", has_audio: false };
   const pop = { id: "pop", kind: "audio", tags: [], name: "pop", description: "", has_audio: true, duration: 1 };
+  let current = project;
+  const applied = [], requests = [];
   createProduction({
-    getProject: () => project, applyProject() {},
-    api: async (path) => path === "/api/assets/reference-sound" ? pending : path === "/api/assets" ? [visual, pop] : {},
+    getProject: () => current, applyProject(p) { applied.push(p); },
+    api: async (path, options) => {
+      if (path.includes("/retakes/")) { requests.push(options); return pending; }
+      return path === "/api/assets/reference-sound" ? pending : path === "/api/assets" ? [visual, pop] : {};
+    },
     changed() {}, pushUndo() {}, saveNow() {}, toast() {}, time: String, parseTime: Number,
     video: { currentTime: 0, paused: true, muted: false, volume: 1, style: {}, addEventListener() {} },
     outputTime: (t) => t, isEdited: () => true, showOriginal() {}, refreshTimeline() {},
@@ -55,6 +60,8 @@ function controls(t, role = "graphic") {
   });
   return {
     project, change,
+    applied, requests, switchProject: (p) => { current = p; },
+    choose: () => elements.get("retake-list").onclick({ target: { closest: (selector) => selector === "[data-take],[data-keep-both]" ? { dataset: { take: "group", index: "1" } } : null } }),
     release: () => release({ asset_id: "pop", asset_in: .1, volume: .35, enabled: true }),
   };
 }
@@ -66,6 +73,17 @@ test("a delayed default cannot overwrite a newer Title choice", async (t) => {
   c.release(); await pending;
   assert.equal(c.project.overlays[0].role, "title");
   assert.equal(c.project.overlays[0].entrance_sound, null);
+});
+
+test("a delayed take decision cannot select a different project", async (t) => {
+  const c = controls(t);
+  const pending = c.choose();
+  await Promise.resolve();
+  assert.equal(c.requests[0].body.base_revision, 7);
+  c.switchProject({ ...c.project, id: "other" });
+  c.release();
+  await pending;
+  assert.equal(c.applied.length, 0);
 });
 
 test("a delayed pop enable cannot attach sound to a newer Graphic choice", async (t) => {

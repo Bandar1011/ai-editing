@@ -1,4 +1,4 @@
-import { createCanvas } from "./canvas.mjs?v=factory-5";
+import { createCanvas } from "./canvas.mjs?v=factory-6";
 import {
   keptRanges,
   clipsFor,
@@ -8,9 +8,9 @@ import {
   mappedSpans,
   lanesFor,
   entranceEvent,
-} from "./timeline.mjs?v=factory-5";
-import { createProduction } from "./production.js?v=factory-5";
-import { mergeOverlayNormalization } from "./overlay-state.mjs?v=factory-5";
+} from "./timeline.mjs?v=factory-6";
+import { createProduction } from "./production.js?v=factory-6";
+import { mergeOverlayNormalization } from "./overlay-state.mjs?v=factory-6";
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s ?? "").replace(
@@ -156,8 +156,15 @@ function editable(p = project) {
 }
 function busy() {
   return (
-    project && Object.values(project.jobs).some((j) => j.status === "running")
+    project && Object.values(project.jobs).some(activeJob)
   );
+}
+function activeJob(job) {
+  return job?.status === "queued" || job?.status === "running";
+}
+function previewOnly() {
+  const jobs = Object.entries(project?.jobs || {}).filter(([, job]) => activeJob(job));
+  return jobs.length === 1 && jobs[0][0] === "preview";
 }
 function duration() {
   return project?.media.duration || 0;
@@ -613,25 +620,31 @@ function renderTimeline() {
 function renderJobs() {
   const running = Object.entries(project.jobs).find(
     ([, j]) => j.status === "running",
-  );
+  ) || Object.entries(project.jobs).find(([, j]) => activeJob(j));
   const latest = Object.entries(project.jobs).sort(
-    (a, b) => (b[1].started_at || 0) - (a[1].started_at || 0),
+    (a, b) => (b[1].queued_at || b[1].started_at || 0) - (a[1].queued_at || a[1].started_at || 0),
   )[0];
   const error = latest?.[1].status === "error" ? latest : null;
   const names = {
-    preview: "Preparing video & waveform…",
-    silence: "Finding the quiet sections…",
-    transcribe: "Transcribing on your Mac…",
-    export: "Rendering your video…",
-    prepare: "Preparing captions, speech cuts, and retake decisions…",
+    preview: "Preparing preview",
+    audio: "Preparing audio",
+    silence: "Detecting quiet",
+    speech: "Detecting speech",
+    transcribe: "Transcribing",
+    transcription: "Transcribing",
+    retakes: "Comparing takes",
+    apply: "Applying edit",
+    export: "Exporting",
+    prepare: "Preparing video",
   };
-  $("job-status").hidden = !running && !error;
+  const prepared = latest?.[0] === "prepare" && latest[1].status === "done";
+  $("job-status").hidden = !running && !error && !prepared;
   $("job-status").classList.toggle("error", !running && !!error);
   $("job-status").innerHTML = running
-    ? `<span class="spinner"></span>${names[running[0]]}`
+    ? `<span class="spinner"></span>${running[1].status === "queued" ? "Queued" : names[running[1].stage] || names[running[0]]} · ${time(Date.now() / 1000 - (running[1].started_at || running[1].queued_at || Date.now() / 1000), false)}`
     : error
       ? esc(error[1].message)
-      : "";
+      : prepared ? "Ready for edit" : "";
   $("export-button").disabled = !!running || conflicted || dirty;
   $("plain-export-button").disabled = !!running || conflicted || dirty;
   $("analyze-button").disabled =
@@ -647,10 +660,10 @@ function renderJobs() {
     : "";
   $("silence-settings").disabled = !!running;
   $("prepare-button").disabled =
-    !!running ||
+    (!!running && !previewOnly()) ||
     !project.media.has_audio ||
     conflicted ||
-    !health.transcription_ready;
+    !health.transcription_ready || !health.whisper_ready;
 }
 function updateSummary() {
   if (!project) return;
@@ -874,9 +887,10 @@ function setMode(value) {
   skipCut();
 }
 async function task(kind, plain = false) {
-  if (!project || busy()) return;
+  if (!project || (busy() && !(kind === "prepare" && previewOnly()))) return;
+  const id = project.id;
   await saveNow();
-  if (conflicted) return;
+  if (conflicted || project?.id !== id) return;
   let body = {};
   if (kind === "silence")
     body = {
@@ -900,14 +914,22 @@ async function task(kind, plain = false) {
   if (kind !== "export") pushUndo();
   ownJobs.add(kind);
   try {
-    project = await api(`/api/projects/${project.id}/${kind}`, {
+    const sequence = editSequence;
+    const response = await api(`/api/projects/${id}/${kind}`, {
       method: "POST",
       body,
     });
+    if (project?.id !== id) return;
+    if (dirty || editSequence !== sequence) {
+      project.jobs = response.jobs;
+      renderJobs();
+      return;
+    }
+    project = response;
     savedEditable = editable();
     renderProject();
   } catch (error) {
-    ownJobs.delete(kind);
+    if (project?.id === id) ownJobs.delete(kind);
     throw error;
   }
 }
@@ -1654,8 +1676,15 @@ async function poll() {
     return;
   pollRunning = true;
   try {
-    const id = project.id,
-      p = await api(`/api/projects/${project.id}`);
+    const id = project.id;
+    const status = await api(`/api/projects/${id}/status`);
+    if (project?.id !== id || dirty || savePromise) return;
+    if (status.revision <= project.revision) {
+      renderJobs();
+      setSaveStatus("All changes saved");
+      return;
+    }
+    const p = await api(`/api/projects/${id}`);
     if (project?.id !== id || dirty || savePromise) return;
     if (p.revision <= project.revision) {
       setSaveStatus("All changes saved");
@@ -1671,7 +1700,7 @@ async function poll() {
     }
     const finishedExport =
       ownJobs.has("export") &&
-      was.export?.status === "running" &&
+      activeJob(was.export) &&
       p.jobs.export?.status === "done";
     if (finishedExport) reviewFile = p.exports.at(-1)?.file;
     project = p;
@@ -1679,12 +1708,13 @@ async function poll() {
     renderProject();
     if (finishedExport) openExport();
     for (const [kind, job] of Object.entries(p.jobs)) {
-      if (was[kind]?.status === "running" && job.status === "done") {
+      if (activeJob(was[kind]) && job.status === "done") {
         ownJobs.delete(kind);
         if (kind === "silence")
           toast("Pauses removed. Drag clip edges to adjust.");
         if (kind === "transcribe")
           toast(`${p.subtitles.length} subtitles ready to review.`);
+        if (kind === "prepare") toast("Prepared. Review captions and takes.");
         if (kind === "export") toast("Your export is ready to download.");
       }
       if (job.status === "error") ownJobs.delete(kind);

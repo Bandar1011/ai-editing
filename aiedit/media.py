@@ -6,7 +6,10 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import uuid
+import wave
+import array
 from fractions import Fraction
 from pathlib import Path
 
@@ -138,7 +141,7 @@ def graphics_filter(transfer: str, white_nits: float = 203) -> str:
     )
 
 
-def make_proxy(source: Path, directory: Path, audio: bool) -> None:
+def make_proxy(source: Path, directory: Path, audio: bool, on_video_ready=None) -> None:
     color = color_info(source)
     scaling = "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2"
     run(
@@ -166,6 +169,8 @@ def make_proxy(source: Path, directory: Path, audio: bool) -> None:
             str(directory / "preview.mp4"),
         ]
     )
+    if on_video_ready:
+        on_video_ready()
     if audio:
         run(
             [
@@ -253,6 +258,35 @@ def extract_speech_audio(source: Path, wav: Path) -> None:
     ])
 
 
+def validate_speech_audio(wav):
+    with wave.open(str(wav), "rb") as stream:
+        if (stream.getnchannels(), stream.getsampwidth(), stream.getframerate()) != (
+            1,
+            2,
+            16000,
+        ):
+            raise ValueError("Expected mono 16 kHz PCM analysis audio.")
+        if not stream.getnframes():
+            raise ValueError("The analysis audio is empty.")
+
+
+def pcm_audio_quality(wav, start, end):
+    with wave.open(str(wav), "rb") as stream:
+        first = max(0, min(stream.getnframes(), round(start * stream.getframerate())))
+        count = max(0, round((end - start) * stream.getframerate()))
+        stream.setpos(first)
+        samples = array.array("h", stream.readframes(count))
+    if sys.byteorder != "little":
+        samples.byteswap()
+    return {
+        "clipped_fraction": round(
+            sum(abs(s) >= 32700 for s in samples) / len(samples), 5
+        )
+        if samples
+        else 0.0
+    }
+
+
 def speech_regions(wav: Path, model: Path, padding=SPEECH["padding"]) -> list[dict]:
     if not model.is_file():
         raise ValueError("Install the local speech detector with scripts/setup_vad.py.")
@@ -274,33 +308,7 @@ def speech_regions(wav: Path, model: Path, padding=SPEECH["padding"]) -> list[di
     return regions
 
 
-def transcribe(source: Path, directory: Path, model: Path, language: str) -> list[dict]:
-    if not model.is_file():
-        raise ValueError(
-            "The local speech model is missing. Run: uv run python scripts/setup_model.py"
-        )
-    directory.mkdir(parents=True, exist_ok=True)
-    wav, prefix = directory / "speech.wav", directory / "speech"
-    run(
-        [
-            binary("ffmpeg"),
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(source),
-            "-vn",
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            "-c:a",
-            "pcm_s16le",
-            str(wav),
-        ]
-    )
-    # Flash attention disables DTW in whisper.cpp; explicitly disable it.
+def alignment_preset(model):
     preset = os.environ.get("AIEDIT_DTW_MODEL")
     if not preset:
         model_name = model.stem.removeprefix("ggml-")
@@ -319,6 +327,18 @@ def transcribe(source: Path, directory: Path, model: Path, language: str) -> lis
         raise ValueError(
             "Set AIEDIT_DTW_MODEL to the matching whisper.cpp alignment preset for this custom model."
         )
+    return preset
+
+
+def transcribe_audio(wav, directory, model, language, duration):
+    if not model.is_file():
+        raise ValueError(
+            "The local speech model is missing. Run: uv run python scripts/setup_model.py"
+        )
+    directory.mkdir(parents=True, exist_ok=True)
+    prefix = directory / "speech"
+    preset = alignment_preset(model)
+    # Flash attention disables DTW in whisper.cpp; explicitly disable it.
     run(
         [
             binary("whisper-cli"),
@@ -342,7 +362,6 @@ def transcribe(source: Path, directory: Path, model: Path, language: str) -> lis
         timeout=14400,
     )
     raw = json.loads(prefix.with_suffix(".json").read_text(encoding="utf-8"))
-    duration = probe(source)["duration"]
     words = bound_words(aligned_words(raw), duration)
     if not words:
         raise ValueError(
@@ -363,7 +382,19 @@ def transcribe(source: Path, directory: Path, model: Path, language: str) -> lis
     (directory / "word-transcript.json").write_text(
         json.dumps(transcript, ensure_ascii=False, indent=2) + "\n"
     )
-    return short_captions(words)
+    return transcript
+
+
+def transcribe(source: Path, directory: Path, model: Path, language: str) -> list[dict]:
+    from .analysis import Analysis
+
+    transcript = Analysis(source, directory).transcript(
+        model, language, probe(source)["duration"]
+    )
+    (directory / "word-transcript.json").write_text(
+        json.dumps(transcript, ensure_ascii=False) + "\n"
+    )
+    return short_captions(transcript["words"])
 
 
 def audio_quality(source: Path, start: float, end: float) -> dict:

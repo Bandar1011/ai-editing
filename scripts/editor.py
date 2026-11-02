@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -19,6 +20,8 @@ parser.add_argument(
         "list",
         "import",
         "get",
+        "status",
+        "context",
         "save",
         "silence",
         "transcribe",
@@ -39,6 +42,14 @@ parser.add_argument(
 )
 parser.add_argument("value", nargs="?")
 parser.add_argument("--file", type=Path)
+parser.add_argument(
+    "--wait",
+    action="store_true",
+    help="Wait for the local job; Prepare returns editorial context.",
+)
+parser.add_argument("--timeout", type=float, default=1800)
+parser.add_argument("--start", type=float, default=0)
+parser.add_argument("--end", type=float)
 parser.add_argument("--threshold", type=float, default=SPEECH["threshold_db"])
 parser.add_argument("--minimum", type=float, default=SPEECH["minimum_pause"])
 parser.add_argument("--padding", type=float, default=SPEECH["padding"])
@@ -49,7 +60,9 @@ parser.add_argument("--format", choices=["source", "vertical"], default="source"
 parser.add_argument("--reusable", action="store_true")
 parser.add_argument("--note-id")
 parser.add_argument("--plain", action="store_true")
-parser.add_argument("--max-words", type=int, choices=[1, 2, 3], default=CAPTIONS["max_words"])
+parser.add_argument(
+    "--max-words", type=int, choices=[1, 2, 3], default=CAPTIONS["max_words"]
+)
 parser.add_argument("--source-url", default="")
 parser.add_argument(
     "--source-kind", choices=["local", "web", "simulator", "download"], default="local"
@@ -62,6 +75,7 @@ parser.add_argument("--kind", choices=["audio", "video", "image"], default="audi
 parser.add_argument("--mode", choices=["screenshot", "video"], default="screenshot")
 parser.add_argument("--seconds", type=float, default=4)
 parser.add_argument("--retake-id")
+parser.add_argument("--base-revision", type=int)
 parser.add_argument("--selected", type=int, choices=[0, 1])
 parser.add_argument(
     "--reason", default="Selected after reviewing delivery and meaning."
@@ -138,7 +152,16 @@ elif args.command not in ("health", "list"):
     if not args.value:
         parser.error("this command requires a project ID")
     route = f"/api/projects/{args.value}"
-    if args.command == "save":
+    if args.command == "status":
+        route += "/status"
+    elif args.command == "context":
+        import urllib.parse
+
+        params = {"start": args.start}
+        if args.end is not None:
+            params["end"] = args.end
+        route += "/context?" + urllib.parse.urlencode(params)
+    elif args.command == "save":
         if not args.file:
             parser.error(
                 "save requires --file with an Edit JSON object, including base_revision"
@@ -164,7 +187,14 @@ elif args.command not in ("health", "list"):
         if not args.retake_id:
             parser.error("take requires --retake-id")
         route += "/retakes/" + args.retake_id
-        method, body = "POST", {"selected": args.selected, "reason": args.reason}
+        method, body = (
+            "POST",
+            {
+                "selected": args.selected,
+                "reason": args.reason,
+                "base_revision": args.base_revision,
+            },
+        )
     elif args.command == "export":
         route += "/export"
         method, body = (
@@ -198,10 +228,45 @@ request = urllib.request.Request(
 try:
     with urllib.request.urlopen(request, timeout=60) as response:
         result = json.load(response)
+    if args.wait and args.command in {
+        "import",
+        "prepare",
+        "transcribe",
+        "silence",
+        "export",
+    }:
+        identifier = result["id"]
+        kind = "preview" if args.command == "import" else args.command
+        job_id = result["jobs"][kind].get("id")
+        deadline = time.monotonic() + args.timeout
+        while result["jobs"][kind]["status"] in {"queued", "running"}:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "The local job is still pending. Read its status before retrying."
+                )
+            time.sleep(0.25)
+            with urllib.request.urlopen(
+                f"{base}/api/projects/{identifier}/status", timeout=60
+            ) as response:
+                result = json.load(response)
+            if job_id and result["jobs"][kind].get("id") != job_id:
+                raise RuntimeError(
+                    "Another request replaced this operation. Read the latest context before continuing."
+                )
+        if result["jobs"][kind]["status"] != "done":
+            raise RuntimeError(result["jobs"][kind]["message"])
+        suffix = "/context" if args.command == "prepare" else ""
+        with urllib.request.urlopen(
+            f"{base}/api/projects/{identifier}{suffix}", timeout=60
+        ) as response:
+            result = json.load(response)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 except urllib.error.HTTPError as exc:
     print(exc.read().decode(), file=sys.stderr)
     sys.exit(1)
 except urllib.error.URLError:
     print("Start the local editor first with ./start.sh", file=sys.stderr)
+    sys.exit(1)
+except RuntimeError as exc:
+    print(str(exc), file=sys.stderr)
     sys.exit(1)

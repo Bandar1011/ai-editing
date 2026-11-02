@@ -103,15 +103,11 @@ def test_prepare_preserves_manual_restore_and_saves_decision_evidence(
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
         source = words("Here is the app.", 0, 0.98) + words("Here is the app.", 3, 0.65)
 
-        def transcribe(identifier, language):
-            editor.repo.change(
-                identifier,
-                lambda p: p.update(
-                    transcript={"words": source}, subtitles=[], captions_authored=False
-                ),
-            )
-
-        monkeypatch.setattr(editor, "transcribe", transcribe)
+        monkeypatch.setattr(
+            editor,
+            "read_transcript",
+            lambda *args, **kwargs: {"words": source, "cues": []},
+        )
         monkeypatch.setattr(
             media, "audio_quality", lambda *args: {"clipped_fraction": 0}
         )

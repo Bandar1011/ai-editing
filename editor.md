@@ -4,7 +4,19 @@ Follow this file when editing videos. Coding and maintenance rules live in [AGEN
 
 ## Editing approach
 
-Start with one clip, a source-timestamped transcript, and a plain story cut. Review the story before adding captions and purposeful visuals. Keep the treatment minimal: hard cuts, the better repeated take, real references, and restrained effects.
+Use the same browser workflow for each clip: import, Prepare video, editorial decisions, live preview, final export. Start with the source-timestamped transcript and a plain story cut in the browser. Add captions and purposeful visuals after reviewing the story. Keep the treatment minimal: hard cuts, the better repeated take, real references, and restrained effects.
+
+The local application owns source ingestion, proxy/audio preparation, speech recognition, quiet/speech detection, caption grouping, timing, standard typography, source mapping, entrance sounds, job scheduling and encoding. Let Prepare finish these steps. Repeated requests reuse valid local analysis. Do not manually reconstruct detector output, retime normal gaps, or write a separate processing script for each video.
+
+The connected assistant owns title wording, faithful subtitle corrections, ambiguous better-take decisions, and reference choice and contextual placement. Read the compact source-time context after preparation, inspect audio/frames only where editorial evidence is needed, and save through the existing revision-guarded API. Read the next context window for longer clips. Use approved presets and the title helper for formatting; do not design it again. Do not repeatedly inspect unrelated repositories, run engineering reviews, or research already-settled tools while editing a clip. A demonstrated processing defect belongs in a separate engineering change.
+
+Timeline and caption changes through the API are editorial data. Check their playback and final output. Application code or instruction changes follow the engineering working agreements separately.
+
+Use the existing browser preview for revisions. It plays cuts, captions, visuals and audio without another full-resolution render. Export when a review candidate is requested or the edit is ready. Reuse a prior verified plain export when appropriate; do not automatically render both plain and final files again for a caption or placement correction. An identical effective export reuses verified encoded bytes while creating a fresh immutable review snapshot.
+
+The assistant operates through the laptop's connected browser/local tools. This workflow adds no hosted AI provider, API key, or automatic cloud processing. Opening an ordinary webpage alone does not connect it to a ChatGPT subscription.
+
+Prepare reports queued work separately from actual processing and records per-stage elapsed time and reuse. Retry an interrupted operation through the same action to reuse completed analysis. Do not repeatedly submit requests or start competing native jobs. Clip duration, recognition workload and machine load affect elapsed time; never promise a fixed completion time or invent a progress percentage.
 
 Keep predictable work deterministic through the tools and shared defaults in `aiedit/presets.py`: typography, caption grouping, speech/quiet detection, cut timing, source-time mapping, entrance sounds, and encoding. The agent handles ambiguous take selection, caption corrections, title wording, reference choice, contextual placement, and exceptions found during review. Preserve approved cuts and text; do not rerun detection merely because defaults changed.
 
@@ -51,4 +63,4 @@ Keep the audio file, selected asset ID, offset, and local default configuration 
 
 ## Review and delivery
 
-Render a plain cut and a final candidate for a new edit. For a correction, preserve the approved version and render the changed candidate. Check the exact encoded file for joins, captions, reference placement/continuity, sound, resolution, and color. An export is an immutable review candidate with its own complete edit snapshot and captions. Feedback identifies the exact export, timeline position, change, and reason. Preserve corrections and approvals with their versions.
+Review the plain story cut in the browser before adding visuals. Render a separate plain file only when requested or needed for a meaningful comparison. For a correction, preserve the approved version and render the changed candidate. During iteration, inspect the changed sections and reuse unchanged evidence. Check the exact final encoded file for joins, captions, reference placement/continuity, sound, resolution, and color. An export is an immutable review candidate with its own complete edit snapshot and captions. Feedback identifies the exact export, timeline position, change, and reason. Preserve corrections and approvals with their versions.

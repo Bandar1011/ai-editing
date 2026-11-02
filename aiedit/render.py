@@ -1,8 +1,125 @@
 """FFmpeg composition with source-time overlays, restrained punch-ins, and ducked music."""
 
 import uuid
+import platform
+import os
+import shutil
+from pathlib import Path
 
 from .timeline import ass_text, entrance_event, kept_ranges, remap_subtitles
+
+
+def render_identity(project, source, burn_subtitles, assets, plain, format):
+    """Conservative byte-affecting identity; review metadata never invalidates it."""
+    from . import media
+    from .analysis import file_identity, key_for, tool_identity
+
+    fonts = {}
+    captioned = burn_subtitles and not plain and project["subtitles"]
+    if captioned:
+        if any(
+            os.environ.get(name)
+            for name in ("FONTCONFIG_FILE", "FONTCONFIG_PATH", "FONTCONFIG_SYSROOT")
+        ):
+            return None
+        # libass uses CoreText on macOS and Fontconfig on Linux. Include all
+        # installed fallback faces, not only the requested caption family.
+        roots = [
+            Path("/System/Library/Fonts"),
+            Path("/Library/Fonts"),
+            Path.home() / "Library/Fonts",
+            Path("/usr/share/fonts"),
+            Path("/usr/local/share/fonts"),
+            Path.home() / ".fonts",
+            Path.home() / ".local/share/fonts",
+        ]
+        roots += list(
+            Path("/System/Library/AssetsV2").glob("com_apple_MobileAsset_Font*")
+        )
+        for root in roots:
+            if root.is_dir():
+                for path in root.rglob("*"):
+                    if (
+                        path.suffix.lower() in {".ttf", ".ttc", ".otf", ".otc"}
+                        and path.is_file()
+                    ):
+                        fonts[str(path)] = file_identity(path)
+        if platform.system() != "Darwin":
+            font_list = shutil.which("fc-list")
+            if not font_list:
+                return None
+            for name in media.run([font_list, "-f", "%{file}\n"]).splitlines():
+                path = Path(name)
+                if path.is_file():
+                    fonts[str(path)] = file_identity(path)
+            for root in (Path("/etc/fonts"), Path("/usr/local/etc/fonts")):
+                if root.is_dir():
+                    for path in root.rglob("*.conf"):
+                        if path.is_file():
+                            fonts[str(path)] = file_identity(path)
+        if not fonts:
+            return (
+                None  # Unknown font environment: encode normally instead of guessing.
+            )
+    payload = {
+        "schema": 1,
+        "source": file_identity(source),
+        "media": project["media"],
+        "kept": kept_ranges(project["media"]["duration"], project["cuts"]),
+        "plain": plain,
+        "format": format,
+        "burn_subtitles": bool(burn_subtitles and not plain),
+        "captions": project["subtitles"] if captioned else [],
+        "style": project["subtitle_style"] if captioned else None,
+        "overlays": project.get("overlays", []) if not plain else [],
+        "punches": project.get("punches", []) if not plain else [],
+        "music": project.get("music") if not plain else None,
+        "assets": {
+            key: {
+                "sha256": file_identity(item["path"]),
+                "media": {
+                    k: item["metadata"].get(k)
+                    for k in ("kind", "width", "height", "duration", "has_audio")
+                },
+            }
+            for key, item in assets.items()
+        }
+        if not plain
+        else {},
+        "code": {
+            name: file_identity(Path(__file__).parent / name)
+            for name in ("render.py", "timeline.py", "media.py")
+        },
+        "encoder": media.video_encoding(media.color_info(source)),
+        "ffmpeg": tool_identity("ffmpeg"),
+        "fonts": fonts,
+        "platform": (platform.system(), platform.release(), platform.machine()),
+    }
+    return key_for(payload)
+
+
+def reuse_export(project, directory, key):
+    from .analysis import file_identity
+
+    if key is None:
+        return None
+    directory = Path(directory).resolve()
+    for candidate in reversed(project.get("exports", [])):
+        if candidate.get("render_cache", {}).get("key") != key:
+            continue
+        prior = directory / candidate["file"]
+        if prior.resolve().parent != directory or not prior.is_file():
+            continue
+        if file_identity(prior) != candidate["sha256"]:
+            continue
+        target = directory / f"{uuid.uuid4().hex[:10]}.mp4"
+        with prior.open("rb") as source, target.open("xb") as output:
+            shutil.copyfileobj(source, output)
+        if file_identity(target) != candidate["sha256"]:
+            target.unlink()
+            continue
+        return target, candidate["file"]
+    return None
 
 
 def mapped_spans(start, end, kept):
