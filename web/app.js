@@ -9,7 +9,7 @@ import {
   lanesFor,
   entranceEvent,
 } from "./timeline.mjs?v=factory-6";
-import { createProduction } from "./production.js?v=factory-6";
+import { createProduction } from "./production.js?v=factory-7";
 import { mergeOverlayNormalization } from "./overlay-state.mjs?v=factory-6";
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
@@ -654,7 +654,7 @@ function renderJobs() {
       ? (error[0] === "assistant" ? "AI editing stopped" : esc(error[1].message))
       : aiDone ? (assistant.stage === "preserved" ? "Saved edit preserved" : assistant.outcome === "needs_review" ? "Review needed" : "Ready for review")
       : prepared ? (project.preparation_kind === "visual" ? "Ready · no speech" : "Ready for edit") : "";
-  $("retry-assistant").hidden = !aiCurrent || assistant.status !== "error";
+  $("retry-assistant").hidden = !aiCurrent || (assistant.status !== "error" && assistant.outcome !== "needs_review");
   $("retry-assistant").disabled = !!running || conflicted || dirty;
   $("assistant-result").hidden = !aiCurrent;
   $("assistant-details").innerHTML = assistant

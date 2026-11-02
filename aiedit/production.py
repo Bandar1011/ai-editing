@@ -448,6 +448,7 @@ def apply_editorial(editor, identifier, options, *, receipt=None):
                 raise ValueError("Send each decision ID only once.")
 
         def update(current):
+            previous_caption_ids = {c["id"] for c in current["subtitles"]}
             for correction in options.caption_fixes:
                 if not correction.text.strip():
                     raise ValueError("A subtitle correction must contain text.")
@@ -497,6 +498,16 @@ def apply_editorial(editor, identifier, options, *, receipt=None):
                 if job.get("id") != receipt["run_id"]:
                     raise ValueError("The AI editing session changed.")
                 job["receipts"].append(dict(receipt, revision=current["revision"] + 1))
+                if options.take_choices:
+                    generated = current.get("assistant_caption_baseline", {}).get("generated", {}).copy()
+                    generated.update({
+                        c["id"]: key_for(c) for c in current["subtitles"]
+                        if not current.get("captions_authored", True) or c["id"] not in previous_caption_ids
+                    })
+                    current["assistant_caption_baseline"] = {
+                        "preparation_key": current["preparation_key"],
+                        "generated": generated,
+                    }
 
         return editor.repo.change(identifier, update)
 

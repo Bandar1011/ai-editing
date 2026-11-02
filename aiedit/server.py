@@ -298,9 +298,11 @@ class Editor:
                 return self.repo.load(identifier)
             raise HTTPException(409, "Wait for AI editing to finish before starting another operation.")
         with self.repo.lock(identifier):
-            self.repo.load(identifier)
-            if kind == "prepare" and self.repo.load(identifier)["jobs"].get("prepare", {}).get("next_job_pending"):
-                return self.repo.load(identifier)
+            current = self.repo.load(identifier)
+            if current["jobs"].get("prepare", {}).get("next_job_pending") or current["jobs"].get("assistant", {}).get("status") in {"queued", "running"}:
+                if kind == "prepare":
+                    return current
+                raise HTTPException(409, "Wait for AI editing to finish before starting another operation.")
             job_id = uuid.uuid4().hex
             predecessor = None
             with self.job_lock:
