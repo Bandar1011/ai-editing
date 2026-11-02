@@ -59,6 +59,8 @@ python3 scripts/editor.py asset-job JOB_ID
 
 Inbox import deduplicates by content checksum and preserves originals. Inspect images or representative video frames, listen where necessary, and add descriptive tags, mood, purpose, source, and rights through `PUT /api/assets/ASSET_ID`. File extension alone is not semantic classification. Asset search uses names, descriptions, and tags.
 
+The creator's default screenshot/B-roll entrance sound is **Bubble pop**, stored locally with the tag `default-reference-pop`. Find it with `python3 scripts/editor.py assets default-reference-pop`. During chat-driven edits, add one separate audio overlay at each reference's first visible source timestamp, at volume `0.35`, using the asset's actual duration within the available footage. If the reference starts inside a removed interval, anchor the sound to its first kept frame. Do not add another pop at an intervening speech cut, to captions, or to an opening title. Keep existing user-adjusted effects; check for an existing entrance effect before adding one. This is an editing-workflow default, not a browser setting that automatically inserts sounds on every manual overlay addition. The original file, local asset ID, and source/rights notes stay in the private library.
+
 Downloads use the installed yt-dlp without browser cookies or user configuration. They are bounded to one item, ten minutes of media, a five-minute transfer, and a 100 MB working-directory budget. Sources without duration metadata are checked against the actual downloaded file. A failed login-protected or unsupported download is reported. Import an available local file instead of bypassing access controls. A downloader does not grant usage rights.
 
 ## Online references
