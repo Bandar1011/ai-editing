@@ -612,3 +612,85 @@ def test_shutdown_interrupts_the_owned_session(prepared_client):
     after = wait_ai(editor, p["id"])
     assert after["jobs"]["assistant"]["status"] == "error"
     assert after["jobs"]["prepare"]["status"] == "done"
+
+
+def test_unchanged_protected_layer_does_not_block_new_reference(
+    prepared_client, tmp_path
+):
+    from PIL import Image
+
+    client, editor, p, _ = prepared_client
+    image = tmp_path / "reference.png"
+    Image.new("RGB", (120, 120), (255, 0, 0)).save(image)
+    asset = editor.library.import_file(
+        image, name="Generated reference", rights="Generated test image"
+    )
+    response = client.patch(
+        f"/api/projects/{p['id']}/editorial",
+        json={
+            "base_revision": p["revision"],
+            "overlays": [
+                {
+                    "id": "human-graphic",
+                    "asset_id": asset["id"],
+                    "start": 0.2,
+                    "end": 1,
+                    "x": 0.25,
+                    "y": 0.25,
+                    "role": "graphic",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    original = editor.repo.load(p["id"])["overlays"][0]
+
+    def session(run):
+        ctx = call(editor, run, "context")
+        editor.assistant.tool(run.project_id, run.token, "inspect", {"time": 0.2})
+        editor.assistant.tool(
+            run.project_id, run.token, "inspect", {"asset_id": asset["id"]}
+        )
+        call(
+            editor,
+            run,
+            "apply",
+            base_revision=ctx["base_revision"],
+            overlays=[
+                ctx["overlays"][0],
+                {
+                    "id": "new-reference",
+                    "asset_id": asset["id"],
+                    "start": 1,
+                    "end": 1.5,
+                    "role": "reference",
+                    "entrance_sound": None,
+                },
+            ],
+        )
+        ctx = call(editor, run, "context")
+        rejected = False
+        try:
+            call(
+                editor,
+                run,
+                "apply",
+                base_revision=ctx["base_revision"],
+                overlays=[dict(original, x=0.8)],
+            )
+        except ValueError:
+            rejected = True
+        assert rejected, "A changed protected layer must still be rejected"
+        return {
+            "summary": "Added a reference while preserving the graphic.",
+            "review_notes": ["Title needs review."],
+        }
+
+    editor.assistant = Assistant(editor, session=session)
+    client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
+    after = wait_ai(editor, p["id"])
+    assert after["jobs"]["assistant"]["status"] == "done", after["jobs"]["assistant"][
+        "message"
+    ]
+    assert next(o for o in after["overlays"] if o["id"] == original["id"]) == original
+    assert any(o["id"] == "new-reference" for o in after["overlays"])

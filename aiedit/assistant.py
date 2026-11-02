@@ -87,7 +87,7 @@ TOOLS = {
     ),
     "apply": (
         production.EditorialChanges,
-        "Apply targeted editorial decisions atomically against the latest context revision. Choose takes before captions or references. Human changes stop the run; do not bypass conflicts. Titles use the title tool.",
+        "Apply targeted editorial decisions atomically against the latest context revision. Send new or changed references only; existing layers are preserved automatically. An unchanged protected layer is allowed, but changing it is rejected. Choose takes before captions or references. Human changes stop the run; do not bypass conflicts. Titles use the title tool.",
     ),
     "title": (
         Title,
@@ -546,17 +546,28 @@ class Assistant:
             for choice in options.take_choices:
                 if choice.id in run.protected_takes:
                     raise ValueError("Preserve previously reviewed take choices.")
+            new_overlays = []
             for overlay in options.overlays:
+                if overlay.id in run.protected_overlays:
+                    previous = next(o for o in p["overlays"] if o["id"] == overlay.id)
+                    canonical = production.Overlay.model_validate(previous).model_dump()
+                    if any(
+                        canonical[key] != value
+                        for key, value in overlay.model_dump(exclude_unset=True).items()
+                    ):
+                        raise ValueError(
+                            f"Preserve existing visual layer {overlay.id}. Omit it from overlays; existing layers are preserved automatically."
+                        )
+                    continue
                 if not run.source_inspected:
                     raise ValueError(
                         "Inspect the source shot before placing references."
                     )
-                if overlay.id in run.protected_overlays:
-                    raise ValueError("Preserve existing visual layers.")
                 if overlay.role != "reference" or overlay.asset_id not in run.inspected:
                     raise ValueError(
                         "Inspect each real reference before placing it. Titles use the title tool."
                     )
+                new_overlays.append(overlay)
             # Progress writes advance revision; require a fresh context after any
             # *editorial* change, but permit this session's bookkeeping writes.
             if options.base_revision > p["revision"]:
@@ -569,6 +580,7 @@ class Assistant:
             options = options.model_copy(
                 update={
                     "base_revision": p["revision"],
+                    "overlays": new_overlays,
                     "take_choices": [
                         c.model_copy(update={"base_revision": p["revision"]})
                         for c in options.take_choices
