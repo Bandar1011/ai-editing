@@ -1,6 +1,6 @@
 # Minimal reel workflow
 
-The connected assistant makes editorial decisions. The local application runs the repeated preparation and export steps, and the browser keeps each decision reviewable. A source clip is never modified or published automatically. Use one workflow: import, Prepare video, editorial decisions, live preview, export.
+Prepare automatically starts the installed, signed-in Codex session for editorial decisions after local processing. No API key is needed. The browser shows its progress, actual saved result and review notes. `prepare --wait` waits through that AI pass; avoid doing the same title/caption work again manually. The commands below also support targeted corrections after review. A source clip is never modified or published automatically. Use one workflow: import, Prepare video, automatic editorial decisions, live preview, export.
 
 Read [editor.md](../editor.md) for editing instructions. [AGENTS.md](../AGENTS.md) covers engineering work; this document supplies commands and API examples.
 
@@ -15,6 +15,8 @@ python3 scripts/editor.py import /absolute/path/clip.mp4
 python3 scripts/editor.py prepare PROJECT_ID --language auto --max-words 3 --wait
 python3 scripts/editor.py context PROJECT_ID --start 60
 ```
+
+If AI editing fails, use the browser's Retry AI editing action or `python3 scripts/editor.py retry-ai PROJECT_ID --wait`. This keeps completed local analysis and saved decisions. The runner uses the existing ChatGPT sign-in (`codex login`); it does not wake the engineering chat. See [browser-workflow.md](browser-workflow.md) for runtime capabilities and local/account processing boundaries.
 
 Prepare can queue once behind the initial preview. The same pending request returns the same job; a conflicting operation returns 409. `--wait` follows that job and returns the first editorial context window when it completes. `context` returns at most 60 source seconds with `window.next_start` for continuation. `status PROJECT_ID` reads compact queue/stage state without fetching old export snapshots. A normal browser upload can be followed immediately by Prepare video. Preparation:
 

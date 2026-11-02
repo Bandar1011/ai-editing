@@ -59,7 +59,7 @@ def prepared_client(recording, tmp_path, monkeypatch):
 
     monkeypatch.setattr(media, "transcribe_audio", recognize)
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         editor.model.parent.mkdir(exist_ok=True)
@@ -538,7 +538,7 @@ def test_silent_recording_keeps_interactions_without_asr(
 
     monkeypatch.setattr(media, "transcribe_audio", unexpected)
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(source, source.name)["id"])

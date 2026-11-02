@@ -1,0 +1,319 @@
+import base64
+import json
+import threading
+import time
+
+import pytest
+from fastapi import HTTPException
+
+from aiedit.assistant import Assistant
+from test_media_and_api import recording  # noqa: F401
+from test_preparation import prepared_client, prepare_video  # noqa: F401
+
+
+def wait_ai(editor, identifier):
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        p = editor.repo.load(identifier)
+        if (
+            not any(
+                j["status"] in {"queued", "running"} or j.get("next_job_pending")
+                for j in p["jobs"].values()
+            )
+            and identifier not in editor.active
+            and not editor.assistant.is_running(identifier)
+        ):
+            return p
+        time.sleep(0.01)
+    pytest.fail("AI session did not finish")
+
+
+def call(editor, run, name, **arguments):
+    result = editor.assistant.tool(run.project_id, run.token, name, arguments)
+    return json.loads(result["content"][0]["text"])
+
+
+def test_prepare_automatically_runs_editorial_tools_and_fixed_title(prepared_client):
+    client, editor, p, _ = prepared_client
+    invocations = []
+
+    def session(run):
+        invocations.append(run.id)
+        assert run.project_id not in editor.active
+        ctx = call(editor, run, "context")
+        assert ctx["window"]["next_start"] is None
+        image = editor.assistant.tool(
+            run.project_id, run.token, "inspect", {"time": 0.2}
+        )
+        assert base64.b64decode(image["content"][1]["data"]).startswith(b"\xff\xd8")
+        call(
+            editor,
+            run,
+            "apply",
+            base_revision=ctx["base_revision"],
+            caption_fixes=[
+                {"id": ctx["captions"][0]["id"], "text": "Faithful correction"}
+            ],
+        )
+        call(
+            editor,
+            run,
+            "title",
+            lines=["Focus better"],
+            reason="The clip demonstrates focusing.",
+        )
+        return {
+            "summary": "Corrected captions and added the opening title.",
+            "review_notes": [],
+        }
+
+    editor.assistant = Assistant(editor, session=session)
+    assert (
+        client.post(
+            f"/api/projects/{p['id']}/prepare", json={"language": "en"}
+        ).status_code
+        == 200
+    )
+    after = wait_ai(editor, p["id"])
+    assert after["jobs"]["prepare"]["status"] == "done"
+    assert after["jobs"]["assistant"]["status"] == "done"
+    assert after["subtitles"][0]["text"] == "Faithful correction"
+    title = next(o for o in after["overlays"] if o["role"] == "title")
+    assert title["id"] == "assistant-title" and title["white_nits"] == 1000
+    assert title.get("entrance_sound") is None
+    assert len(after["jobs"]["assistant"]["receipts"]) == 2
+    prepare_video(client, editor, after, language="en")
+    assert wait_ai(editor, p["id"])["overlays"] == after["overlays"]
+    assert invocations == [after["jobs"]["assistant"]["id"]]
+
+
+def test_duplicate_prepare_and_wrong_tool_token_do_not_start_another_ai(
+    prepared_client,
+):
+    client, editor, p, _ = prepared_client
+    entered, release = threading.Event(), threading.Event()
+    invocations = []
+
+    def session(run):
+        invocations.append(run)
+        call(editor, run, "context")
+        entered.set()
+        assert release.wait(10)
+        return {"summary": "Read the clip.", "review_notes": ["Title requires review."]}
+
+    editor.assistant = Assistant(editor, session=session)
+    try:
+        client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
+        assert entered.wait(10)
+        before = editor.repo.load(p["id"])
+        response = client.post(
+            f"/api/projects/{p['id']}/prepare", json={"language": "en"}
+        )
+        assert response.status_code == 200
+        assert (
+            response.json()["jobs"]["prepare"]["id"] == before["jobs"]["prepare"]["id"]
+        )
+        route = f"/api/projects/{p['id']}/assistant/tools"
+        assert (
+            client.post(
+                route,
+                json={"name": "context", "arguments": {}},
+                headers={"Authorization": "Bearer wrong"},
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                route,
+                json={"name": "context", "arguments": {}},
+                headers={"Authorization": "Bearer " + invocations[0].token},
+            ).status_code
+            == 200
+        )
+    finally:
+        release.set()
+    after = wait_ai(editor, p["id"])
+    assert (
+        len(invocations) == 1
+        and after["jobs"]["assistant"]["outcome"] == "needs_review"
+    )
+    assert (
+        client.post(
+            route,
+            json={"name": "context", "arguments": {}},
+            headers={"Authorization": "Bearer " + invocations[0].token},
+        ).status_code
+        == 403
+    )
+
+
+def test_manual_change_stops_ai_without_overwriting_caption(prepared_client):
+    client, editor, p, _ = prepared_client
+    entered, release = threading.Event(), threading.Event()
+
+    def session(run):
+        ctx = call(editor, run, "context")
+        entered.set()
+        assert release.wait(10)
+        call(
+            editor,
+            run,
+            "apply",
+            base_revision=ctx["base_revision"],
+            caption_fixes=[{"id": ctx["captions"][0]["id"], "text": "AI correction"}],
+        )
+        return {"summary": "Must not complete.", "review_notes": []}
+
+    editor.assistant = Assistant(editor, session=session)
+    try:
+        client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
+        assert entered.wait(10)
+        latest = editor.repo.load(p["id"])
+        changed = client.patch(
+            f"/api/projects/{p['id']}/editorial",
+            json={
+                "base_revision": latest["revision"],
+                "caption_fixes": [
+                    {"id": latest["subtitles"][0]["id"], "text": "My correction"}
+                ],
+            },
+        )
+        assert changed.status_code == 200
+    finally:
+        release.set()
+    after = wait_ai(editor, p["id"])
+    assert after["subtitles"][0]["text"] == "My correction"
+    assert after["jobs"]["assistant"]["status"] == "error"
+    assert "preserved" in after["jobs"]["assistant"]["message"]
+
+
+def test_retry_preserves_partial_decisions_and_authored_captions(prepared_client):
+    client, editor, p, _ = prepared_client
+    attempts = []
+
+    def session(run):
+        attempts.append(run.id)
+        ctx = call(editor, run, "context")
+        if len(attempts) == 1:
+            call(
+                editor,
+                run,
+                "apply",
+                base_revision=ctx["base_revision"],
+                caption_fixes=[
+                    {"id": ctx["captions"][0]["id"], "text": "Saved correction"}
+                ],
+            )
+            raise RuntimeError("Connection interrupted after saving")
+        assert ctx["captions"][0]["text"] == "Saved correction"
+        with pytest.raises(ValueError, match="protected"):
+            call(
+                editor,
+                run,
+                "apply",
+                base_revision=ctx["base_revision"],
+                caption_fixes=[
+                    {"id": ctx["captions"][0]["id"], "text": "Must not overwrite"}
+                ],
+            )
+        return {
+            "summary": "Preserved the saved correction.",
+            "review_notes": ["Title needs review."],
+        }
+
+    editor.assistant = Assistant(editor, session=session)
+    client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
+    failed = wait_ai(editor, p["id"])
+    assert failed["jobs"]["prepare"]["status"] == "done"
+    assert failed["jobs"]["assistant"]["status"] == "error"
+    assert failed["jobs"]["assistant"]["receipts"]
+    response = client.post(f"/api/projects/{p['id']}/assistant/retry")
+    assert response.status_code == 200
+    done = wait_ai(editor, p["id"])
+    assert len(attempts) == 2 and done["subtitles"][0]["text"] == "Saved correction"
+    assert done["jobs"]["assistant"]["status"] == "done"
+
+
+def test_exported_edit_is_preserved_without_calling_model(prepared_client):
+    client, editor, p, _ = prepared_client
+    p = prepare_video(client, editor, p, language="en")
+    editor.repo.change(
+        p["id"], lambda current: current["exports"].append({"file": "approved.mp4"})
+    )
+
+    def unexpected(run):
+        pytest.fail("Do not retrofit AI effects onto an exported edit")
+
+    editor.assistant = Assistant(editor, session=unexpected)
+    client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
+    after = wait_ai(editor, p["id"])
+    assert after["jobs"]["assistant"]["stage"] == "preserved"
+    assert after["subtitles"] == p["subtitles"]
+
+
+def test_absent_codex_is_an_honest_retryable_error(prepared_client, monkeypatch):
+    client, editor, p, _ = prepared_client
+    from aiedit import assistant
+
+    original = assistant.shutil.which
+    monkeypatch.setattr(
+        assistant.shutil,
+        "which",
+        lambda name: None if name == "codex" else original(name),
+    )
+    editor.assistant = Assistant(editor)
+    client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
+    after = wait_ai(editor, p["id"])
+    assert after["jobs"]["prepare"]["status"] == "done"
+    assert after["jobs"]["assistant"]["status"] == "error"
+    assert "not installed" in after["jobs"]["assistant"]["message"]
+
+
+def test_session_tool_scope_and_visual_evidence_are_enforced(prepared_client):
+    client, editor, p, _ = prepared_client
+
+    def session(run):
+        ctx = call(editor, run, "context")
+        with pytest.raises(HTTPException):
+            editor.assistant.tool("000000000000", run.token, "context", {})
+        with pytest.raises(ValueError, match="Inspect"):
+            call(editor, run, "title", lines=["A title"], reason="Context")
+        with pytest.raises(ValueError, match="Unknown"):
+            editor.assistant.tool(run.project_id, run.token, "shell", {})
+        with pytest.raises(Exception):
+            call(
+                editor,
+                run,
+                "import_reference",
+                filename="../../other.png",
+                source_url="https://example.com",
+                description="Not a capture",
+            )
+        return {
+            "summary": "Read the clip safely.",
+            "review_notes": ["Title needs review."],
+        }
+
+    editor.assistant = Assistant(editor, session=session)
+    client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
+    after = wait_ai(editor, p["id"])
+    assert after["jobs"]["assistant"]["status"] == "done"
+
+
+def test_shutdown_interrupts_the_owned_session(prepared_client):
+    client, editor, p, _ = prepared_client
+    entered = threading.Event()
+
+    def session(run):
+        call(editor, run, "context")
+        entered.set()
+        assert run.stopped.wait(10)
+        return {"summary": "Must not become ready.", "review_notes": []}
+
+    editor.assistant = Assistant(editor, session=session)
+    client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
+    assert entered.wait(10)
+    editor.assistant.close()
+    after = wait_ai(editor, p["id"])
+    assert after["jobs"]["assistant"]["status"] == "error"
+    assert after["jobs"]["prepare"]["status"] == "done"

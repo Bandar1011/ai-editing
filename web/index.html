@@ -541,7 +541,14 @@
               <div class="panel-body" id="auto-panel">
                 <button class="button analyze" id="prepare-button">
                   Prepare video</button
-                ><button class="button subtle" id="analyze-button">
+                ><button class="button subtle" id="retry-assistant" hidden>
+                  Retry AI editing
+                </button>
+                <details class="controls-group" id="assistant-result" hidden>
+                  <summary>AI edit details</summary>
+                  <div id="assistant-details"></div>
+                </details>
+                <button class="button subtle" id="analyze-button">
                   Remove pauses
                 </button>
                 <details class="retakes">

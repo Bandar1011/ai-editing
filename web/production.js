@@ -144,6 +144,7 @@ export function createProduction({
     updatePreview();
   }
   $("prepare-button").onclick = act(() => task("prepare"));
+  $("retry-assistant").onclick = act(() => task("assistant/retry"));
   for (const [id, key] of [
     ["caption-case", "uppercase"],
     ["caption-margin", "margin_percent"],

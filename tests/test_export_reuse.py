@@ -18,7 +18,7 @@ def test_identical_export_reuses_bytes_with_independent_snapshot_and_captions(
     recording, tmp_path, monkeypatch
 ):
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
@@ -63,7 +63,7 @@ def test_burned_caption_and_corrupt_candidate_require_new_encode(
     recording, tmp_path, monkeypatch
 ):
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
@@ -122,7 +122,7 @@ def test_optional_font_discovery_failure_still_encodes(
     )
     monkeypatch.setattr(media, "run", discover)
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(recording, recording.name)["id"])

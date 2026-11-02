@@ -27,7 +27,7 @@ def edit_body(p, **updates):
 
 def test_versions_preserve_captions_ranges_provenance_and_feedback(recording, tmp_path):
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(
@@ -163,7 +163,7 @@ def test_source_transcript_survives_caption_edits(recording, tmp_path, monkeypat
         Editor, "read_transcript", lambda *args, **kwargs: {"cues": copy.deepcopy(cues)}
     )
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
@@ -181,7 +181,7 @@ def test_source_transcript_survives_caption_edits(recording, tmp_path, monkeypat
 def test_transcription_cannot_replace_concurrent_human_correction(
     recording, tmp_path, monkeypatch
 ):
-    editor = create_app(tmp_path / "data").state.editor
+    editor = create_app(tmp_path / "data", assistant_session=False).state.editor
     try:
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
         manual = [{"id": "human", "start": 0.2, "end": 1, "text": "Keep my correction"}]
@@ -211,7 +211,7 @@ def test_transcription_cannot_replace_concurrent_human_correction(
 
 def test_scriptable_ids_and_reference_urls_are_rejected(recording, tmp_path):
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
@@ -248,7 +248,7 @@ def test_portrait_clip_without_audio_preserves_native_format(tmp_path):
         ]
     )
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(source, source.name)["id"])

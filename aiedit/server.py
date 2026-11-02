@@ -225,6 +225,7 @@ class Repository:
 
 class Editor:
     def __init__(self, directory: Path):
+        self.assistant = None
         self.repo = Repository(directory)
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-editing")
         self.library = AssetLibrary(directory / "library" / "assets")
@@ -290,9 +291,16 @@ class Editor:
         *args,
         after_preview=False,
         request_key=None,
+        after_success=None,
     ) -> dict:
+        if self.assistant is not None and self.assistant.is_running(identifier):
+            if kind == "prepare":
+                return self.repo.load(identifier)
+            raise HTTPException(409, "Wait for AI editing to finish before starting another operation.")
         with self.repo.lock(identifier):
             self.repo.load(identifier)
+            if kind == "prepare" and self.repo.load(identifier)["jobs"].get("prepare", {}).get("next_job_pending"):
+                return self.repo.load(identifier)
             job_id = uuid.uuid4().hex
             predecessor = None
             with self.job_lock:
@@ -354,6 +362,7 @@ class Editor:
 
             def execute():
                 self.job_context.current = (identifier, kind, job_id)
+                completed = False
                 try:
                     now = time.time()
                     mutate_job(
@@ -383,8 +392,10 @@ class Editor:
                             message="Complete",
                             finished_at=finished,
                             seconds=round(finished - j["started_at"], 4),
+                            next_job_pending=after_success is not None,
                         )
                     )
+                    completed = True
                 except Exception as exc:
                     message = str(exc.detail if isinstance(exc, HTTPException) else exc)
                     mutate_job(
@@ -397,6 +408,15 @@ class Editor:
                 finally:
                     self.job_context.current = None
                     self._release_job(identifier, job_id)
+                if completed and after_success is not None:
+                    try:
+                        after_success(identifier)
+                    except Exception:
+                        self.repo.change(identifier, lambda p: p["jobs"].update(
+                            assistant={"id": uuid.uuid4().hex, "status": "error", "stage": "assistant", "message": "Preparation finished, but AI editing could not start. Retry AI editing.", "queued_at": time.time(), "preparation_key": p.get("preparation_key")}
+                        ))
+                    finally:
+                        mutate_job(lambda job: job.update(next_job_pending=False))
 
             try:
                 self.pool.submit(execute)
@@ -503,6 +523,98 @@ class Editor:
                 "The original media changed outside the editor. Import it as a new video."
             )
         return analysis
+
+    def context(self, identifier: str, start: float = 0, end: float | None = None):
+        p = self.repo.load(identifier)
+        duration = p["media"]["duration"]
+        if end is not None and not math.isfinite(end):
+            raise ValueError("Choose a finite source-time window.")
+        end = min(duration, start + 60, end if end is not None else duration)
+        if (
+            not math.isfinite(start)
+            or not math.isfinite(end)
+            or not 0 <= start < end <= duration
+        ):
+            raise ValueError("Choose a source-time window inside the video.")
+        overlaps = lambda item: item["start"] < end and item["end"] > start
+        source_words = [
+            w for w in p.get("transcript", {}).get("words", []) if overlaps(w)
+        ]
+        if len(source_words) > 1000:
+            end = source_words[999]["end"]
+            source_words = source_words[:1000]
+        captions = [c for c in p["subtitles"] if overlaps(c)]
+        retakes = [r for r in p["retakes"] if any(overlaps(t) for t in r["takes"])]
+        assets = self.library.list()
+        topic = p["story"].get("topic", "")
+        feedback = []
+        for summary in self.repo.list()[:25]:
+            for note in self.repo.load(summary["id"])["reviews"]:
+                if note["scope"] == "reusable":
+                    feedback.append(
+                        {k: note[k] for k in ("change", "reason", "created_at")}
+                    )
+        return {
+            "id": identifier,
+            "base_revision": p["revision"],
+            "time_basis": "Seconds on the original source; cuts remove intervals.",
+            "window": {
+                "start": start,
+                "end": end,
+                "next_start": end if end < duration else None,
+            },
+            "media": p["media"],
+            "jobs": p["jobs"],
+            "brief": p["brief"],
+            "story": p["story"],
+                "preparation_kind": p.get("preparation_kind"),
+                "preparation_warnings": p.get("preparation_warnings", []),
+                "editorial_phase": "takes" if any(r.get("status") == "review" for r in p["retakes"]) else "captions_title_visuals",
+            "source_words": source_words,
+            "captions": captions,
+            "cuts": [c for c in p["cuts"] if overlaps(c)],
+            "retakes": retakes[:10],
+            "retakes_truncated": len(retakes) > 10,
+            "caption_review": [w for w in source_words if w.get("confidence", 1) < 0.7][
+                :40
+            ],
+            "overlays": [o for o in p["overlays"] if overlaps(o)],
+            "assets": [
+                {
+                    k: a.get(k)
+                    for k in (
+                        "id",
+                        "name",
+                        "kind",
+                        "description",
+                        "tags",
+                        "source_url",
+                        "rights",
+                    )
+                }
+                for a in assets[:30]
+            ],
+            "assets_truncated": len(assets) > 30,
+            "reusable_feedback": sorted(
+                feedback, key=lambda n: n["created_at"], reverse=True
+            )[:10],
+            "hooks": self.hooks.suggest(topic),
+            "agent_tasks": [
+                "Choose title wording",
+                "Correct subtitles faithfully",
+                "Choose and place real B-roll",
+                "Review uncertain takes using audio and frames",
+            ],
+            "code_tasks": [
+                "Speech detection and hard cuts",
+                "Caption grouping and approved typography",
+                "Source-time mapping and reference pop",
+                "Preview, local encoding and immutable export",
+            ],
+            "save_route": f"/api/projects/{identifier}",
+                "decision_route": f"/api/projects/{identifier}/editorial",
+            "latest_export": p["exports"][-1]["file"] if p["exports"] else None,
+        }
 
     def read_transcript(self, identifier: str, language: str, analysis=None):
         project = self.repo.load(identifier)
@@ -650,26 +762,33 @@ class Editor:
         self.repo.change(identifier, lambda p: p["exports"].append(result))
 
 
-def create_app(data_dir: Path | None = None) -> FastAPI:
+def create_app(data_dir: Path | None = None, *, assistant_session=True) -> FastAPI:
     editor = Editor(data_dir or Path(os.environ.get("AIEDIT_DATA", ROOT / ".aiedit")))
+    from .assistant import Assistant
+
+    if assistant_session is not False:
+        editor.assistant = Assistant(editor, session=None if assistant_session is True else assistant_session)
 
     @asynccontextmanager
     async def lifespan(app):
         # A killed render must not leave the UI showing an eternal running job.
         for summary in editor.repo.list():
             p = editor.repo.load(summary["id"])
-            if any(j["status"] in {"queued", "running"} for j in p["jobs"].values()):
+            if any(j["status"] in {"queued", "running"} or j.get("next_job_pending") for j in p["jobs"].values()):
 
                 def interrupted(project):
                     for job in project["jobs"].values():
-                        if job["status"] in {"queued", "running"}:
+                        if job["status"] in {"queued", "running"} or job.get("next_job_pending"):
                             job.update(
                                 status="error",
                                 message="Interrupted when the editor stopped. Run the operation again.",
+                                next_job_pending=False,
                             )
 
                 editor.repo.change(p["id"], interrupted)
         yield
+        if editor.assistant is not None:
+            editor.assistant.close()
         editor.pool.shutdown(wait=False, cancel_futures=True)
 
     app = FastAPI(title="AI Editing", lifespan=lifespan)
@@ -761,96 +880,33 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/projects/{identifier}/context")
     def editorial_context(identifier: str, start: float = 0, end: float | None = None):
-        p = editor.repo.load(identifier)
-        duration = p["media"]["duration"]
-        if end is not None and not math.isfinite(end):
-            raise ValueError("Choose a finite source-time window.")
-        end = min(duration, start + 60, end if end is not None else duration)
-        if (
-            not math.isfinite(start)
-            or not math.isfinite(end)
-            or not 0 <= start < end <= duration
-        ):
-            raise ValueError("Choose a source-time window inside the video.")
-        overlaps = lambda item: item["start"] < end and item["end"] > start
-        source_words = [
-            w for w in p.get("transcript", {}).get("words", []) if overlaps(w)
-        ]
-        if len(source_words) > 1000:
-            end = source_words[999]["end"]
-            source_words = source_words[:1000]
-        captions = [c for c in p["subtitles"] if overlaps(c)]
-        retakes = [r for r in p["retakes"] if any(overlaps(t) for t in r["takes"])]
-        assets = editor.library.list()
-        topic = p["story"].get("topic", "")
-        feedback = []
-        for summary in editor.repo.list()[:25]:
-            for note in editor.repo.load(summary["id"])["reviews"]:
-                if note["scope"] == "reusable":
-                    feedback.append(
-                        {k: note[k] for k in ("change", "reason", "created_at")}
-                    )
-        return {
-            "id": identifier,
-            "base_revision": p["revision"],
-            "time_basis": "Seconds on the original source; cuts remove intervals.",
-            "window": {
-                "start": start,
-                "end": end,
-                "next_start": end if end < duration else None,
-            },
-            "media": p["media"],
-            "jobs": p["jobs"],
-            "brief": p["brief"],
-            "story": p["story"],
-                "preparation_kind": p.get("preparation_kind"),
-                "preparation_warnings": p.get("preparation_warnings", []),
-                "editorial_phase": "takes" if any(r.get("status") == "review" for r in p["retakes"]) else "captions_title_visuals",
-            "source_words": source_words,
-            "captions": captions,
-            "cuts": [c for c in p["cuts"] if overlaps(c)],
-            "retakes": retakes[:10],
-            "retakes_truncated": len(retakes) > 10,
-            "caption_review": [w for w in source_words if w.get("confidence", 1) < 0.7][
-                :40
-            ],
-            "overlays": [o for o in p["overlays"] if overlaps(o)],
-            "assets": [
-                {
-                    k: a.get(k)
-                    for k in (
-                        "id",
-                        "name",
-                        "kind",
-                        "description",
-                        "tags",
-                        "source_url",
-                        "rights",
-                    )
-                }
-                for a in assets[:30]
-            ],
-            "assets_truncated": len(assets) > 30,
-            "reusable_feedback": sorted(
-                feedback, key=lambda n: n["created_at"], reverse=True
-            )[:10],
-            "hooks": editor.hooks.suggest(topic),
-            "agent_tasks": [
-                "Choose title wording",
-                "Correct subtitles faithfully",
-                "Choose and place real B-roll",
-                "Review uncertain takes using audio and frames",
-            ],
-            "code_tasks": [
-                "Speech detection and hard cuts",
-                "Caption grouping and approved typography",
-                "Source-time mapping and reference pop",
-                "Preview, local encoding and immutable export",
-            ],
-            "save_route": f"/api/projects/{identifier}",
-                "decision_route": f"/api/projects/{identifier}/editorial",
-            "latest_export": p["exports"][-1]["file"] if p["exports"] else None,
-        }
+        return editor.context(identifier, start, end)
+
+    @app.post("/api/projects/{identifier}/assistant/retry")
+    def retry_assistant(identifier: str, request: Request):
+        if editor.assistant is None:
+            raise HTTPException(503, "AI editing is unavailable in this offline editor instance.")
+        return editor.assistant.start(
+            identifier,
+            str(request.base_url) + f"api/projects/{identifier}/assistant/tools",
+            retry=True,
+        )
+
+    @app.post("/api/projects/{identifier}/assistant/tools")
+    async def assistant_tool(identifier: str, request: Request):
+        from .assistant import ToolRequest
+
+        if editor.assistant is None:
+            raise HTTPException(403, "This AI session is not active.")
+        raw = await request.body()
+        if len(raw) > 2 * 1024 * 1024:
+            raise HTTPException(413, "Editorial tool request is too large.")
+        call = ToolRequest.model_validate_json(raw)
+        token = request.headers.get("authorization", "").removeprefix("Bearer ")
+        # Tool/native work is blocking; do not occupy the ASGI event loop.
+        from starlette.concurrency import run_in_threadpool
+
+        return await run_in_threadpool(editor.assistant.tool, identifier, token, call.name, call.arguments)
 
     @app.put("/api/projects/{identifier}")
     def save_project(identifier: str, edit: Edit):

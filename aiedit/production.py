@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -427,6 +427,80 @@ def apply_take(current, retake_id, options):
         )
 
 
+def apply_editorial(editor, identifier, options, *, receipt=None):
+    with editor.repo.lock(identifier):
+        p = editor.repo.load(identifier)
+        if options.base_revision != p["revision"]:
+            raise HTTPException(
+                409,
+                "The project changed. Read the latest context before applying decisions.",
+            )
+        if options.take_choices and (options.caption_fixes or options.overlays):
+            raise ValueError(
+                "Choose takes first, then read updated context before fixing captions or placing visuals."
+            )
+        for items in (
+            options.caption_fixes,
+            options.take_choices,
+            options.overlays,
+        ):
+            if len({item.id for item in items}) != len(items):
+                raise ValueError("Send each decision ID only once.")
+
+        def update(current):
+            for correction in options.caption_fixes:
+                if not correction.text.strip():
+                    raise ValueError("A subtitle correction must contain text.")
+                cue = next(
+                    (c for c in current["subtitles"] if c["id"] == correction.id),
+                    None,
+                )
+                if cue is None:
+                    raise ValueError("Caption not found. Read the latest context.")
+                if cue["text"] != correction.text:
+                    cue["text"] = correction.text
+                    current["captions_authored"] = True
+            if options.caption_fixes:
+                story.split_existing_captions(current["subtitles"])
+            for choice in options.take_choices:
+                if choice.base_revision not in (None, options.base_revision):
+                    raise ValueError("Use the same revision for every take choice.")
+                apply_take(current, choice.id, choice)
+            if options.overlays:
+                remaining = {o.id: o for o in options.overlays}
+                combined = []
+                for previous in current["overlays"]:
+                    submitted = remaining.pop(previous["id"], None)
+                    value = (
+                        dict(previous, **submitted.model_dump(exclude_unset=True))
+                        if submitted is not None
+                        else previous
+                    )
+                    combined.append(Overlay.model_validate(value))
+                combined += list(remaining.values())
+                if len(combined) > 100:
+                    raise ValueError("Use at most 100 overlays.")
+                overlays = normalize_overlays(
+                    current["overlays"], combined, editor.library
+                )
+                validate_production(
+                    editor, {"overlays": overlays}, current["media"]["duration"]
+                )
+                current["overlays"] = overlays
+            if options.story is not None:
+                current["story"].update(
+                    options.story.model_dump(exclude_unset=True)
+                )
+
+            if receipt is not None:
+                job = current["jobs"].get("assistant", {})
+                if job.get("id") != receipt["run_id"]:
+                    raise ValueError("The AI editing session changed.")
+                job["receipts"].append(dict(receipt, revision=current["revision"] + 1))
+
+        return editor.repo.change(identifier, update)
+
+
 def router(editor):
     api = APIRouter()
     downloads, download_lock = {}, threading.Lock()
@@ -621,7 +695,7 @@ def router(editor):
         return FileResponse(editor.library.waveform(asset_id))
 
     @api.post("/api/projects/{identifier}/prepare")
-    def prepare_project(identifier: str, options: PrepareOptions):
+    def prepare_project(identifier: str, options: PrepareOptions, request: Request):
         p = editor.repo.load(identifier)
 
         def run(identifier):
@@ -636,6 +710,12 @@ def router(editor):
             run,
             after_preview=True,
             request_key=key_for(options.model_dump()),
+            after_success=(
+                lambda identifier: editor.assistant.start(
+                    identifier,
+                    str(request.base_url) + f"api/projects/{identifier}/assistant/tools",
+                )
+            ) if editor.assistant is not None else None,
         )
 
     @api.post("/api/projects/{identifier}/retakes/{retake_id}")
@@ -661,71 +741,7 @@ def router(editor):
 
     @api.patch("/api/projects/{identifier}/editorial")
     def editorial_changes(identifier: str, options: EditorialChanges):
-        with editor.repo.lock(identifier):
-            p = editor.repo.load(identifier)
-            if options.base_revision != p["revision"]:
-                raise HTTPException(
-                    409,
-                    "The project changed. Read the latest context before applying decisions.",
-                )
-            if options.take_choices and (options.caption_fixes or options.overlays):
-                raise ValueError(
-                    "Choose takes first, then read updated context before fixing captions or placing visuals."
-                )
-            for items in (
-                options.caption_fixes,
-                options.take_choices,
-                options.overlays,
-            ):
-                if len({item.id for item in items}) != len(items):
-                    raise ValueError("Send each decision ID only once.")
-
-            def update(current):
-                for correction in options.caption_fixes:
-                    if not correction.text.strip():
-                        raise ValueError("A subtitle correction must contain text.")
-                    cue = next(
-                        (c for c in current["subtitles"] if c["id"] == correction.id),
-                        None,
-                    )
-                    if cue is None:
-                        raise ValueError("Caption not found. Read the latest context.")
-                    if cue["text"] != correction.text:
-                        cue["text"] = correction.text
-                        current["captions_authored"] = True
-                if options.caption_fixes:
-                    story.split_existing_captions(current["subtitles"])
-                for choice in options.take_choices:
-                    if choice.base_revision not in (None, options.base_revision):
-                        raise ValueError("Use the same revision for every take choice.")
-                    apply_take(current, choice.id, choice)
-                if options.overlays:
-                    remaining = {o.id: o for o in options.overlays}
-                    combined = []
-                    for previous in current["overlays"]:
-                        submitted = remaining.pop(previous["id"], None)
-                        value = (
-                            dict(previous, **submitted.model_dump(exclude_unset=True))
-                            if submitted is not None
-                            else previous
-                        )
-                        combined.append(Overlay.model_validate(value))
-                    combined += list(remaining.values())
-                    if len(combined) > 100:
-                        raise ValueError("Use at most 100 overlays.")
-                    overlays = normalize_overlays(
-                        current["overlays"], combined, editor.library
-                    )
-                    validate_production(
-                        editor, {"overlays": overlays}, current["media"]["duration"]
-                    )
-                    current["overlays"] = overlays
-                if options.story is not None:
-                    current["story"].update(
-                        options.story.model_dump(exclude_unset=True)
-                    )
-
-            return editor.repo.change(identifier, update)
+        return apply_editorial(editor, identifier, options)
 
     @api.get("/api/hooks")
     def hooks(topic: str = ""):

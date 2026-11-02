@@ -98,7 +98,7 @@ def test_retake_quality_can_keep_the_first_take_and_preserves_changed_meaning():
 def test_prepare_preserves_manual_restore_and_saves_decision_evidence(
     recording, tmp_path, monkeypatch
 ):
-    editor = create_app(tmp_path / "data").state.editor
+    editor = create_app(tmp_path / "data", assistant_session=False).state.editor
     try:
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
         source = words("Here is the app.", 0, 0.98) + words("Here is the app.", 3, 0.65)
@@ -165,7 +165,7 @@ def test_asset_overlay_music_and_punch_in_are_encoded_and_manifested(
         ]
     )
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         a = client.post(
@@ -316,7 +316,7 @@ def test_still_reference_has_no_camera_flash_across_a_cut(tmp_path):
 
 def test_hook_performance_is_only_user_supplied(tmp_path):
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         assert (
             client.get("/api/hooks", params={"topic": "screen time"}).json()[
@@ -375,7 +375,7 @@ def test_take_reselection_restores_the_baseline_and_preserves_manual_ranges(
     recording, tmp_path
 ):
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
@@ -460,7 +460,7 @@ def test_video_reference_keeps_its_timing_across_a_source_cut(recording, tmp_pat
         ]
     )
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         asset = editor.library.import_file(
@@ -519,7 +519,7 @@ def test_video_reference_keeps_its_timing_across_a_source_cut(recording, tmp_pat
 
 def test_non_frame_aligned_cuts_preserve_native_frame_rate(recording, tmp_path):
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
@@ -549,7 +549,7 @@ def test_capture_requires_configuration_and_an_owned_lease(tmp_path):
     from pathlib import Path
 
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         assert not client.get("/api/capture/config").json()["configured"]
         assert client.post("/api/assets/capture-app", json={}).status_code == 400
@@ -716,7 +716,7 @@ def test_addon_audio_is_timed_through_cuts_and_can_be_muted(recording, tmp_path,
             ]
         )
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         asset = client.post("/api/assets/import", json={"path": str(asset_path)}).json()
@@ -810,7 +810,7 @@ def test_free_layer_positions_persist_and_match_encoded_pixels(tmp_path):
             f"color={color}:s=32x32", "-frames:v", "1", "-threads", "1", str(image),
         ])
         images.append(image)
-    with TestClient(create_app(tmp_path / "data"), base_url="http://127.0.0.1") as client:
+    with TestClient(create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1") as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(source, source.name)["id"])
         assets = [editor.library.import_file(image) for image in images]

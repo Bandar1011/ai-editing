@@ -58,7 +58,7 @@ def import_reference_assets(client, paths):
 def test_reference_creation_defaults_are_frozen_and_existing_edits_survive(
     recording, reference_assets, tmp_path,
 ):
-    with TestClient(create_app(tmp_path / "data"), base_url="http://127.0.0.1") as client:
+    with TestClient(create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1") as client:
         editor = client.app.state.editor
         visual, sound = import_reference_assets(client, reference_assets)
         p = wait_for(editor, editor.create(recording, recording.name)["id"])
@@ -113,7 +113,7 @@ def test_reference_creation_defaults_are_frozen_and_existing_edits_survive(
 def test_reference_sound_validation_and_default_failures_are_atomic(
     recording, reference_assets, tmp_path,
 ):
-    with TestClient(create_app(tmp_path / "data"), base_url="http://127.0.0.1") as client:
+    with TestClient(create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1") as client:
         editor = client.app.state.editor
         image, pop = reference_assets
         visual = editor.library.import_file(image)
@@ -153,7 +153,7 @@ def test_pop_is_encoded_once_continuously_across_a_speech_cut(reference_assets, 
         "anullsrc=r=48000:cl=mono", "-t", "4", "-c:v", "libx264",
         "-preset", "ultrafast", "-threads", "2", "-c:a", "aac", str(source),
     ])
-    with TestClient(create_app(tmp_path / "data"), base_url="http://127.0.0.1") as client:
+    with TestClient(create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1") as client:
         editor = client.app.state.editor
         visual, sound = import_reference_assets(client, reference_assets)
         p = wait_for(editor, editor.create(source, source.name)["id"])

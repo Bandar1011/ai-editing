@@ -31,6 +31,7 @@ parser.add_argument(
         "resolve",
         "history",
         "prepare",
+        "retry-ai",
         "assets",
         "asset-import",
         "asset-fetch",
@@ -46,7 +47,7 @@ parser.add_argument("--file", type=Path)
 parser.add_argument(
     "--wait",
     action="store_true",
-    help="Wait for the local job; Prepare returns editorial context.",
+    help="Wait for processing and automatic AI editing; Prepare returns editorial context.",
 )
 parser.add_argument("--timeout", type=float, default=1800)
 parser.add_argument("--start", type=float, default=0)
@@ -191,6 +192,9 @@ elif args.command not in ("health", "list"):
     elif args.command == "prepare":
         route += "/prepare"
         method, body = "POST", {"language": args.language, "max_words": args.max_words}
+    elif args.command == "retry-ai":
+        route += "/assistant/retry"
+        method, body = "POST", {}
     elif args.command == "take":
         if not args.retake_id:
             parser.error("take requires --retake-id")
@@ -239,15 +243,16 @@ try:
     if args.wait and args.command in {
         "import",
         "prepare",
+        "retry-ai",
         "transcribe",
         "silence",
         "export",
     }:
         identifier = result["id"]
-        kind = "preview" if args.command == "import" else args.command
+        kind = "preview" if args.command == "import" else "assistant" if args.command == "retry-ai" else args.command
         job_id = result["jobs"][kind].get("id")
         deadline = time.monotonic() + args.timeout
-        while result["jobs"][kind]["status"] in {"queued", "running"}:
+        while result["jobs"][kind]["status"] in {"queued", "running"} or result["jobs"][kind].get("next_job_pending"):
             if time.monotonic() >= deadline:
                 raise RuntimeError(
                     "The local job is still pending. Read its status before retrying."
@@ -263,6 +268,15 @@ try:
                 )
         if result["jobs"][kind]["status"] != "done":
             raise RuntimeError(result["jobs"][kind]["message"])
+        if args.command == "prepare":
+            while result["jobs"].get("assistant", {}).get("status") in {"queued", "running"}:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("AI editing is still pending. Read its status before retrying.")
+                time.sleep(0.5)
+                with urllib.request.urlopen(f"{base}/api/projects/{identifier}/status", timeout=60) as response:
+                    result = json.load(response)
+            if result["jobs"].get("assistant", {}).get("status") == "error":
+                raise RuntimeError(result["jobs"]["assistant"]["message"])
         suffix = "/context" if args.command == "prepare" else ""
         with urllib.request.urlopen(
             f"{base}/api/projects/{identifier}{suffix}", timeout=60

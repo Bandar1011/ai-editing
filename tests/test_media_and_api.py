@@ -66,7 +66,7 @@ def test_hdr_preview_and_export_preserve_color_and_depth_without_changing_origin
         "-color_trc", transfer, "-colorspace", "bt2020nc", str(source),
     ])
     original_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    with TestClient(create_app(tmp_path / "data"), base_url="http://127.0.0.1") as client:
+    with TestClient(create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1") as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(source, source.name)["id"])
         route = f"/api/projects/{p['id']}"
@@ -160,7 +160,7 @@ def test_real_silence_detection_and_captioned_export(recording, tmp_path):
 
 
 def test_upload_preview_ranges_and_conflict_protection(recording, tmp_path):
-    app = create_app(tmp_path / "data")
+    app = create_app(tmp_path / "data", assistant_session=False)
     original_hash = hashlib.sha256(recording.read_bytes()).hexdigest()
     with TestClient(app, base_url="http://127.0.0.1") as client:
         with recording.open("rb") as handle:
@@ -226,7 +226,7 @@ def test_upload_preview_ranges_and_conflict_protection(recording, tmp_path):
 
 
 def test_rerunning_detection_preserves_manually_restored_audio(recording, tmp_path):
-    app = create_app(tmp_path / "data")
+    app = create_app(tmp_path / "data", assistant_session=False)
     editor = app.state.editor
     try:
         p = editor.create(recording, recording.name)
@@ -256,7 +256,7 @@ def test_rerunning_detection_preserves_manually_restored_audio(recording, tmp_pa
 
 def test_vertical_export_and_persistent_nondestructive_splits(recording, tmp_path):
     with TestClient(
-        create_app(tmp_path / "data"), base_url="http://127.0.0.1"
+        create_app(tmp_path / "data", assistant_session=False), base_url="http://127.0.0.1"
     ) as client:
         editor = client.app.state.editor
         p = wait_for(editor, editor.create(recording, recording.name)["id"])

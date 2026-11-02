@@ -162,7 +162,7 @@ function busy() {
   );
 }
 function activeJob(job) {
-  return job?.status === "queued" || job?.status === "running";
+  return job?.status === "queued" || job?.status === "running" || !!job?.next_job_pending;
 }
 function previewOnly() {
   const jobs = Object.entries(project?.jobs || {}).filter(([, job]) => activeJob(job));
@@ -626,7 +626,10 @@ function renderJobs() {
   const latest = Object.entries(project.jobs).sort(
     (a, b) => (b[1].queued_at || b[1].started_at || 0) - (a[1].queued_at || a[1].started_at || 0),
   )[0];
-  const error = latest?.[1].status === "error" ? latest : null;
+  const assistant = project.jobs.assistant;
+  const aiCurrent = assistant && assistant.preparation_key === project.preparation_key;
+  const error = aiCurrent && assistant.status === "error"
+    ? ["assistant", assistant] : latest?.[1].status === "error" ? latest : null;
   const names = {
     preview: "Preparing preview",
     audio: "Preparing audio",
@@ -639,15 +642,23 @@ function renderJobs() {
     apply: "Applying edit",
     export: "Exporting",
     prepare: "Preparing video",
+    assistant: "AI editing",
   };
   const prepared = latest?.[0] === "prepare" && latest[1].status === "done";
-  $("job-status").hidden = !running && !error && !prepared;
+  const aiDone = aiCurrent && assistant.status === "done";
+  $("job-status").hidden = !running && !error && !prepared && !aiDone;
   $("job-status").classList.toggle("error", !running && !!error);
   $("job-status").innerHTML = running
-    ? `<span class="spinner"></span>${running[1].status === "queued" ? "Queued" : names[running[1].stage] || names[running[0]]} · ${time(Date.now() / 1000 - (running[1].started_at || running[1].queued_at || Date.now() / 1000), false)}`
+    ? `<span class="spinner"></span>${running[1].status === "queued" ? (running[0] === "assistant" ? "AI queued" : "Queued") : running[0] === "assistant" ? esc(running[1].message) : names[running[1].stage] || names[running[0]]} · ${time(Date.now() / 1000 - (running[1].started_at || running[1].queued_at || Date.now() / 1000), false)}`
     : error
-      ? esc(error[1].message)
+      ? (error[0] === "assistant" ? "AI editing stopped" : esc(error[1].message))
+      : aiDone ? (assistant.stage === "preserved" ? "Saved edit preserved" : assistant.outcome === "needs_review" ? "Review needed" : "Ready for review")
       : prepared ? (project.preparation_kind === "visual" ? "Ready · no speech" : "Ready for edit") : "";
+  $("retry-assistant").hidden = !aiCurrent || assistant.status !== "error";
+  $("retry-assistant").disabled = !!running || conflicted || dirty;
+  $("assistant-result").hidden = !aiCurrent;
+  $("assistant-details").innerHTML = assistant
+    ? `<p>${esc(assistant.message)}</p>${(assistant.review_notes || []).length ? `<ul>${assistant.review_notes.map(note => `<li>${esc(note)}</li>`).join("")}</ul>` : ""}` : "";
   $("export-button").disabled = !!running || conflicted || dirty;
   $("plain-export-button").disabled = !!running || conflicted || dirty;
   $("analyze-button").disabled =
@@ -914,7 +925,8 @@ async function task(kind, plain = false) {
       format: "vertical",
     };
   if (kind !== "export") pushUndo();
-  ownJobs.add(kind);
+  const jobKind = kind === "assistant/retry" ? "assistant" : kind;
+  ownJobs.add(jobKind);
   try {
     const sequence = editSequence;
     const response = await api(`/api/projects/${id}/${kind}`, {
@@ -932,7 +944,7 @@ async function task(kind, plain = false) {
     renderProject();
     schedulePoll(0);
   } catch (error) {
-    if (project?.id === id) ownJobs.delete(kind);
+    if (project?.id === id) ownJobs.delete(jobKind);
     throw error;
   }
 }
@@ -1717,7 +1729,11 @@ async function poll() {
           toast("Pauses removed. Drag clip edges to adjust.");
         if (kind === "transcribe")
           toast(`${p.subtitles.length} subtitles ready to review.`);
-        if (kind === "prepare") toast("Prepared. Review captions and takes.");
+        if (kind === "prepare") {
+          if (activeJob(p.jobs.assistant)) ownJobs.add("assistant");
+          toast("Prepared. AI editing starts automatically.");
+        }
+        if (kind === "assistant") toast(job.outcome === "needs_review" ? "AI edit saved. Review the remaining notes." : "AI edit ready to review.");
         if (kind === "export") toast("Your export is ready to download.");
       }
       if (job.status === "error") ownJobs.delete(kind);
