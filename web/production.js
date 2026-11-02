@@ -45,6 +45,7 @@ export function createProduction({
     libraryReady = false,
     downloadJob = null,
     takePreviewEnd = null;
+  const overlayIntents = new WeakMap();
   const act =
     (fn) =>
     async (...args) => {
@@ -361,20 +362,32 @@ export function createProduction({
       field = e.target.dataset.overlayField,
       popField = e.target.dataset.popField;
     if (!row || (!field && !popField)) return;
+    const p = getProject(), o = p.overlays.find((o) => o.id === row.dataset.overlay);
+    if (!o) return;
+    const intent = field === "role" || popField ? Symbol() : null;
+    if (intent) overlayIntents.set(o, intent);
+    const current = () => getProject() === p && p.overlays.includes(o) &&
+      (!intent || overlayIntents.get(o) === intent);
+    async function lookupPop() {
+      try { return await defaultPop(); }
+      catch (error) {
+        if (!current()) return null;
+        render(p);
+        throw error;
+      }
+    }
     if (popField) {
-      const p = getProject(), o = p.overlays.find((o) => o.id === row.dataset.overlay);
-      let sound = o.entrance_sound;
-      if (!sound && e.target.checked) sound = await defaultPop();
-      if (getProject() !== p || !p.overlays.includes(o) || !sound) return;
       const value = popField === "enabled" ? e.target.checked : Number(e.target.value);
+      let sound = o.entrance_sound;
+      if (!sound && value === true) sound = await lookupPop();
+      if (!current()) return;
+      if (!sound) { render(p); return; }
       if (popField === "volume" && (!Number.isFinite(value) || value < 0 || value > 1)) return;
       pushUndo();
       o.entrance_sound = { ...sound, [popField]: value };
       change(); render(p); return;
     }
-    const p = getProject(),
-      o = p.overlays.find((o) => o.id === row.dataset.overlay),
-      value =
+    const value =
         e.target.type === "checkbox"
           ? e.target.checked
           : field === "start" || field === "end"
@@ -407,8 +420,8 @@ export function createProduction({
       return;
     }
     if (o[field] === value) return;
-    const sound = field === "role" && value === "reference" ? await defaultPop() : null;
-    if (getProject() !== p || !p.overlays.includes(o)) return;
+    const sound = field === "role" && value === "reference" ? await lookupPop() : null;
+    if (!current()) return;
     pushUndo();
     o[field] = value;
     if (field === "role") o.entrance_sound = sound;

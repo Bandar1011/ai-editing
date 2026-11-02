@@ -45,6 +45,8 @@ Placement depends on the video: inspect pointing, gaze, face, captions, and avai
 
 Use the approved local **Bubble pop** once when a screenshot or B-roll reference first appears, at 35% volume. The editor attaches the configured sound to new references automatically. Keep the sound linked to its reference; its timing follows the reference and current cuts without another manually placed audio overlay. Do not retrigger it at speech cuts or add it to ordinary captions, titles, or decorative graphics. Preserve user-adjusted sound settings and approved older manual effects.
 
+In chat/API edits, mark new screenshots and B-roll with `role: "reference"` and omit `entrance_sound` to receive the default. Use `role: "title"` or `"graphic"` for other visuals. Preserve the returned sound settings on later saves; use an explicit null or disable the sound to opt out. Do not add a second manual pop.
+
 Keep the audio file, selected asset ID, offset, and local default configuration private. Never substitute a different sound if the selected asset is unavailable. Review the exact export for synchronization and balance.
 
 ## Review and delivery

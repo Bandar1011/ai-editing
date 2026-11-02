@@ -31,6 +31,8 @@ test("server enrichment preserves edits and never resurrects deleted references"
   assert.deepEqual(mergeOverlayNormalization(adjusted, sent, canonical), adjusted);
   const roleChanged = [{ ...live[0], role: "title", entrance_sound: null }];
   assert.deepEqual(mergeOverlayNormalization(roleChanged, sent, canonical), roleChanged);
+  const reclassified = [{ ...live[0], role: "graphic" }];
+  assert.deepEqual(mergeOverlayNormalization(reclassified, sent, canonical), reclassified);
   assert.equal(sent[0].entrance_sound, undefined);
   // The same reconciliation freezes a redo snapshot created while save was pending.
   const redo = mergeOverlayNormalization(structuredClone(sent), sent, canonical);

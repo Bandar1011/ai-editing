@@ -255,11 +255,15 @@ async function saveNow() {
     project.jobs = response.jobs;
     project.exports = response.exports;
     project.reviews = response.reviews;
-    const normalized = mergeOverlayNormalization(project.overlays, snapshot.overlays, response.overlays);
+    const normalized = mergeOverlayNormalization(
+      project.overlays, snapshot.overlays, response.overlays,
+    );
     const enriched = normalized !== project.overlays;
     project.overlays = normalized;
     for (const entry of [...undo, ...redo])
-      entry.overlays = mergeOverlayNormalization(entry.overlays, snapshot.overlays, response.overlays);
+      entry.overlays = mergeOverlayNormalization(
+        entry.overlays, snapshot.overlays, response.overlays,
+      );
     savedEditable = editable(response);
     if (enriched) {
       production.render(project);
@@ -570,9 +574,12 @@ function renderTimeline() {
       const sound = o.entrance_sound;
       const a = assets.find((a) => a.id === sound?.asset_id);
       const event = a && entranceEvent(o, sourceRanges(), a.duration);
-      return event ? audioClip(a, event.start, event.end, event.asset_in,
-        `data-track-entrance="${o.id}"`, a.name) : "";
-    }).join("");
+      return event
+        ? audioClip(a, event.start, event.end, event.asset_in,
+            `data-track-entrance="${o.id}"`, a.name)
+        : "";
+    })
+    .join("");
   for (const [row, track] of [
     ["caption", "subtitle"],
     ["overlay", "overlay"],
@@ -717,7 +724,7 @@ function updateCaption() {
 }
 function layerItem(selection = selectedLayer) {
   if (!project || !selection) return null;
-  return (
+  const item = (
     selection.kind === "caption"
       ? project.subtitles
       : selection.kind === "overlay" || selection.kind === "entrance"
@@ -726,6 +733,10 @@ function layerItem(selection = selectedLayer) {
           ? project.punches
           : []
   ).find((item) => item.id === selection.id);
+  if (selection.kind === "entrance" &&
+      (item?.role !== "reference" || !item.enabled || !item.entrance_sound?.enabled))
+    return null;
+  return item;
 }
 function selectLayer(selection, { seekTo = false } = {}) {
   selectedLayer = selection;
@@ -768,11 +779,11 @@ function deleteSelection() {
     item.entrance_sound.enabled = false;
   } else {
     const key =
-    selectedLayer.kind === "caption"
-      ? "subtitles"
-      : selectedLayer.kind === "overlay"
-        ? "overlays"
-        : "punches";
+      selectedLayer.kind === "caption"
+        ? "subtitles"
+        : selectedLayer.kind === "overlay"
+          ? "overlays"
+          : "punches";
     project[key] = project[key].filter((o) => o.id !== item.id);
   }
   selectedLayer = null;
@@ -1004,6 +1015,7 @@ function previewFrame() {
     return;
   }
   skipCut();
+  production.updatePreview();
   $("playhead").style.left =
     `${Math.min(100, (outputTime(video.currentTime) / (duration() || 1)) * 100)}%`;
   if (video.requestVideoFrameCallback)
