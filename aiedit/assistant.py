@@ -556,7 +556,20 @@ class Assistant:
             # *editorial* change, but permit this session's bookkeeping writes.
             if options.base_revision > p["revision"]:
                 raise HTTPException(409, "Read the latest context before saving.")
-            options = options.model_copy(update={"base_revision": p["revision"]})
+            if any(
+                c.base_revision not in (None, options.base_revision)
+                for c in options.take_choices
+            ):
+                raise ValueError("Use the same revision for every take choice.")
+            options = options.model_copy(
+                update={
+                    "base_revision": p["revision"],
+                    "take_choices": [
+                        c.model_copy(update={"base_revision": p["revision"]})
+                        for c in options.take_choices
+                    ],
+                }
+            )
             result = production.apply_editorial(
                 self.editor,
                 run.project_id,

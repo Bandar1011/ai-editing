@@ -274,6 +274,36 @@ def test_ai_without_source_context_is_not_reported_complete(prepared_client):
     assert "retry AI" in after["jobs"]["assistant"]["message"]
 
 
+def test_take_revision_survives_this_sessions_progress_updates(prepared_client):
+    client, editor, p, _ = prepared_client
+
+    def session(run):
+        ctx = call(editor, run, "context")
+        call(
+            editor,
+            run,
+            "apply",
+            base_revision=ctx["base_revision"],
+            take_choices=[
+                {
+                    "id": ctx["retakes"][0]["id"],
+                    "base_revision": ctx["base_revision"],
+                    "selected": None,
+                    "reason": "Preserve both takes for review",
+                }
+            ],
+        )
+        return {"summary": "Kept both takes.", "review_notes": ["Title needs review."]}
+
+    editor.assistant = Assistant(editor, session=session)
+    client.post(f"/api/projects/{p['id']}/prepare", json={"language": "en"})
+    after = wait_ai(editor, p["id"])
+    assert after["jobs"]["assistant"]["status"] == "done", after["jobs"]["assistant"][
+        "message"
+    ]
+    assert after["retakes"][0]["selected"] is None
+
+
 def test_manual_caption_between_attempts_is_protected(prepared_client):
     client, editor, p, _ = prepared_client
     attempts = []
