@@ -84,7 +84,7 @@ test("a double click starts one native sharing request", async () => {
   const controller = createAirDrop({ read: () => context, save: () => saving, apply() {}, notify() {},
     api: async (path) => {
       if (path.endsWith("/airdrop")) { posts++; return { id: "job", project_id: project.id, file: exported.file,
-        status: "shared", message: "Shared through AirDrop" }; }
+        status: "closed", message: "AirDrop window closed" }; }
       return project;
     } });
   const first = controller.send();
@@ -113,11 +113,11 @@ test("missing export is rendered once and the resulting immutable file is shared
       } else if (path.endsWith("/airdrop")) {
         assert.equal(options.body.file, exported.file);
         assert.equal(options.body.base_revision, server.revision);
-        return { id: "native", project_id: project.id, file: exported.file, status: "shared", message: "Shared through AirDrop" };
+        return { id: "native", project_id: project.id, file: exported.file, status: "closed", message: "AirDrop window closed" };
       }
       return structuredClone(server);
     } });
-  assert.equal((await controller.send()).status, "shared");
+  assert.equal((await controller.send()).status, "closed");
   assert.equal(calls.filter(([p]) => p.endsWith("/export")).length, 1);
   assert.equal(calls.filter(([p]) => p.endsWith("/airdrop")).length, 1);
 });

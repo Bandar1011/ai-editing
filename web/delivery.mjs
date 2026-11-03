@@ -84,7 +84,7 @@ export function createAirDrop({ read, save, api, apply, notify, wait = (ms) => n
           checkResult();
         }
         if (result.status === "error") throw new Error(result.message);
-        if (!["shared", "cancelled"].includes(result.status)) throw new Error("AirDrop did not confirm completion.");
+        if (!["closed", "cancelled"].includes(result.status)) throw new Error("AirDrop did not confirm completion.");
         notify(result.status, result.message);
         return result;
       } catch (error) {

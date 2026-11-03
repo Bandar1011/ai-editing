@@ -121,7 +121,8 @@ def test_export_revision_guard_rejects_stale_request_before_starting(exported_cl
     assert len(editor.repo.load(p["id"])["exports"]) == 1
 
 
-def test_native_result_is_reported_without_claiming_phone_receipt(exported_client):
+@pytest.mark.parametrize("status", ["closed", "cancelled"])
+def test_native_result_is_reported_without_claiming_phone_receipt(exported_client, status):
     client, _, p, opened = exported_client
     route = f"/api/projects/{p['id']}/airdrop"
     client.post(route, json=body(p))
@@ -130,11 +131,11 @@ def test_native_result_is_reported_without_claiming_phone_receipt(exported_clien
         time.sleep(0.01)
     entry = client.app.state.airdrop.requests[(p["id"], "a" * 32)]
     entry["state_file"].write_text(
-        json.dumps({"status": "cancelled", "message": "AirDrop cancelled"})
+        json.dumps({"status": status, "message": "AirDrop window closed"})
     )
-    status = client.get(route + "/" + "a" * 32).json()
-    assert status["status"] == "cancelled"
-    assert status["message"] == "AirDrop cancelled"
+    response = client.get(route + "/" + "a" * 32).json()
+    assert response["status"] == status
+    assert response["message"] == "AirDrop window closed"
 
 
 def test_recorded_preview_has_real_stage_completions(exported_client):

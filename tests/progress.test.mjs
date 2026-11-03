@@ -61,6 +61,13 @@ test("an old export only completes the export step when the current edit matches
   assert.equal(state(describeProgress(p, { exportReady: true }), "export"), "done");
 });
 
+test("the checklist is visible only during work and the prepare-to-AI handoff", () => {
+  assert.equal(describeProgress(project({ prepare: { status: "running", stages: [] } })).visible, true);
+  assert.equal(describeProgress(project({ prepare: { status: "done", next_job_pending: true } })).visible, true);
+  assert.equal(describeProgress(project({ prepare: { status: "done" } })).visible, false);
+  assert.equal(describeProgress(project({ prepare: { status: "error", message: "Stopped" } })).visible, false);
+});
+
 test("upload byte completion still reports importing until the server responds", () => {
   const v = describeProgress(null, { upload: { phase: "importing" } });
   assert.equal(v.loading, "Importing video");

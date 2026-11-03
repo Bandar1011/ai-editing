@@ -206,7 +206,7 @@ class AirDrop:
             try:
                 raw = entry["state_file"].read_text()
                 update = json.loads(raw) if len(raw) < 4000 else {}
-                if update.get("status") in {"choosing", "shared", "cancelled", "error"}:
+                if update.get("status") in {"choosing", "closed", "cancelled", "error"}:
                     entry.update(
                         status=update["status"],
                         message=str(update.get("message", ""))[:500],

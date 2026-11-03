@@ -14,7 +14,8 @@ final class AirDropDelegate: NSObject, NSSharingServiceDelegate {
     }
 
     func sharingService(_ sharingService: NSSharingService, didShareItems items: [Any]) {
-        report("shared", "Shared through AirDrop", finish: true)
+        // AirDrop invokes this on Cancel too; it confirms extension completion.
+        report("closed", "AirDrop window closed", finish: true)
     }
 
     func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: Error) {

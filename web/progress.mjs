@@ -39,9 +39,9 @@ export function describeProgress(project, { upload = null, exportReady = false }
     const message = upload.phase === "copying"
       ? `Copying video${upload.percent == null ? "" : ` · ${upload.percent}%`}`
       : upload.phase === "opening" ? "Opening video" : "Importing video";
-    return { rows, message, loading: message, error: false };
+    return { rows, message, loading: message, error: false, visible: true };
   }
-  if (!project) return { rows, message: "", loading: "", error: false };
+  if (!project) return { rows, message: "", loading: "", error: false, visible: false };
   row("import").state = "done";
   const jobs = project.jobs || {}, prepare = jobs.prepare;
   const assistant = project.preparation_key &&
@@ -118,7 +118,7 @@ export function describeProgress(project, { upload = null, exportReady = false }
         assistant.stage === "preserved" ? "Saved edit preserved" : "Ready for review";
     else if (prepare?.status === "done") message = "Ready for review";
   }
-  return { rows, message, error,
+  return { rows, message, error, visible: !!running || !!prepare?.next_job_pending,
     loading: project.media_ready ? "" : error ? message :
       preview?.stage === "waveform" ? "Preparing audio waveform" : "Preparing video preview" };
 }
@@ -139,6 +139,7 @@ export function mountProgress(root, message) {
   }
   return {
     update(view) {
+      root.hidden = !view.visible;
       for (const r of view.rows) {
         const { item, icon } = nodes.get(r.key);
         if (item.dataset.state !== r.state) item.dataset.state = r.state;
@@ -151,7 +152,8 @@ export function mountProgress(root, message) {
       }
       if (message.textContent !== view.message) message.textContent = view.message;
       message.classList.toggle("error", view.error);
-      message.hidden = !view.message;
+      message.hidden = !view.message || (!view.visible && !view.error) ||
+        view.rows.some((r) => r.state === "active" && r.label === view.message);
     },
   };
 }

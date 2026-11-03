@@ -1562,7 +1562,11 @@ dialog p {
 }
 .preview-card {
   position: relative;
+  grid-template-rows: auto minmax(0, 1fr) 44px;
 }
+.preview-card .preview-top { min-height: 42px; padding: 10px 18px; }
+.preview-card > .canvas-area { display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.preview-card .video-stage { width: min(100cqw, calc((100cqh - 48px) * var(--preview-ratio)), 315px); }
 .preview-status {
   display: flex;
   align-items: flex-start;
@@ -1570,12 +1574,12 @@ dialog p {
   min-width: 0;
 }
 .preview-format { flex-shrink: 0; padding-top: 2px; }
-.processing-status { min-width: 0; }
+.processing-status { min-width: 0; position: absolute; left: 58px; top: 10px; z-index: 2; max-width: 240px; }
 .processing-steps {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 13px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
   padding: 0;
   margin: 0;
   list-style: none;
@@ -1608,9 +1612,11 @@ dialog p {
 .processing-step[data-state="done"], .processing-step[data-state="error"] { color: #111; }
 .processing-step[data-state="done"] .step-icon,
 .processing-step[data-state="skipped"] .step-icon { border: 0; }
-.delivery-actions { display: flex; align-items: center; gap: 12px; padding: 0 18px 10px; }
+.delivery-actions { display: flex; align-items: center; justify-content: center; padding: 0; flex-shrink: 0; }
 .delivery-actions .button { font-size: 12px; }
-#phone-status { font-size: 12px; color: #666; }
+@media (max-width: 700px) {
+  .processing-status { position: static; max-width: none; }
+}
 .uploading .transport { pointer-events: none; opacity: .4; }
 .uploading-empty .editing-grid { grid-template-columns: minmax(0, 1fr); }
 .uploading-empty .inspector, .uploading-empty .timeline-card, .uploading-empty .transport { display: none; }

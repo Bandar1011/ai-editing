@@ -55,7 +55,7 @@
                 <div class="preview-top">
                   <div class="preview-status">
                     <span class="preview-format">9:16</span>
-                    <div class="processing-status">
+                    <div class="processing-status" hidden>
                       <ol id="processing-steps" class="processing-steps" aria-label="Video processing steps"></ol>
                     <div
                       class="job-status"
@@ -77,10 +77,6 @@
                   >
                     ←
                   </button>
-                </div>
-                <div class="delivery-actions">
-                  <button class="button subtle" id="send-phone" disabled>Send to my phone</button>
-                  <span id="phone-status" role="status"></span>
                 </div>
                 <div class="canvas-area">
                   <div
@@ -115,6 +111,10 @@
                       hidden=""
                       id="canvas-selection"
                     ></div>
+                  </div>
+                  <div class="delivery-actions">
+                    <button class="button subtle" id="send-phone" disabled>Send to my phone</button>
+                    <span id="phone-status" class="sr-only" role="status"></span>
                   </div>
                 </div>
                 <div class="transport">

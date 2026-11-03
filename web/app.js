@@ -62,7 +62,7 @@ const phoneDelivery = createAirDrop({
   apply: (p) => { project = p; savedEditable = editable(p); renderProject(); },
   notify: (phase, message) => {
     phoneWorking = ["preparing", "exporting", "choosing"].includes(phase);
-    $("phone-status").textContent = message;
+    $("phone-status").textContent = phoneWorking ? message : "";
     $("send-phone").disabled = phoneWorking || !project || busy() || conflicted;
     if (project) renderJobs();
   },
@@ -648,6 +648,7 @@ function renderJobs() {
 function renderProcessing() {
   const view = describeProgress(project, { upload: uploadState, exportReady: !!currentExport(project) });
   processing.update(view);
+  document.querySelector(".processing-status").hidden = !(view.visible || view.error);
   if (view.loading) $("video-loading-message").textContent = view.loading;
   if (uploadState) $("upload-progress").textContent = view.loading;
   $("import-button").disabled = !!uploadState || phoneWorking;
