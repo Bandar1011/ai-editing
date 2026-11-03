@@ -97,9 +97,9 @@ test("a double click starts one native sharing request", async () => {
 test("missing export is rendered once and the resulting immutable file is shared", async () => {
   const { project, context, exported } = fixture();
   project.exports = [];
-  const server = structuredClone(project), calls = [];
+  const server = structuredClone(project), calls = [], progress = [];
   const controller = createAirDrop({ read: () => context, save: async () => {},
-    apply: (p) => { context.project = p; }, notify() {}, wait: async () => {},
+    apply: (p) => { context.project = p; }, notify: (...v) => progress.push(v), wait: async () => {},
     api: async (path, options) => {
       calls.push([path, options]);
       if (path.endsWith("/export")) {
@@ -120,4 +120,7 @@ test("missing export is rendered once and the resulting immutable file is shared
   assert.equal((await controller.send()).status, "closed");
   assert.equal(calls.filter(([p]) => p.endsWith("/export")).length, 1);
   assert.equal(calls.filter(([p]) => p.endsWith("/airdrop")).length, 1);
+  assert.equal(progress.find(([phase]) => phase === "exporting")[2].exportReady, false);
+  assert.deepEqual(progress.find(([, message]) => message === "Opening AirDrop")[2],
+    { needsExport: true, exportReady: true });
 });

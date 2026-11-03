@@ -1,12 +1,12 @@
 const STEPS = [
   ["import", "Add video", []],
-  ["preview", "Prepare preview", ["preview", "waveform"]],
+  ["preview", "Preparing video", ["preview", "waveform"]],
   ["audio", "Prepare audio", ["audio", "signal"]],
-  ["transcript", "Transcribe", ["transcription"]],
-  ["pauses", "Remove pauses", ["silence", "speech"]],
+  ["transcript", "Transcribing speech", ["transcription"]],
+  ["pauses", "Removing pauses", ["silence", "speech"]],
   ["takes", "Compare takes", ["retakes"]],
   ["captions", "Create captions", ["apply"]],
-  ["assistant", "AI edit", []],
+  ["assistant", "Editing video", []],
   ["export", "Export", []],
 ];
 const active = (job) => job && ["queued", "running"].includes(job.status);
@@ -31,15 +31,28 @@ function stageState(job, stages) {
 }
 
 /** Describe recorded work; never infer completion just from pipeline order. */
-export function describeProgress(project, { upload = null, exportReady = false } = {}) {
+export function describeProgress(project, { upload = null, delivery = null, exportReady = false } = {}) {
   const rows = STEPS.map(([key, label]) => ({ key, label, state: "pending", detail: "" }));
   const row = (key) => rows.find((r) => r.key === key);
+  if (delivery) {
+    const exporting = delivery.needsExport && !delivery.exportReady;
+    const label = delivery.phase === "choosing" ? "Choose your iPhone" : "Opening AirDrop";
+    return {
+      rows: [
+        ...(delivery.needsExport ? [{ key: "export", label: "Exporting video", state: exporting ? "active" : "done" }] : []),
+        { key: "phone", label: exporting ? "Choose your iPhone" : label, state: exporting ? "pending" : "active" },
+      ],
+      message: delivery.phase === "choosing" ? "Choose your iPhone in AirDrop" : "",
+      loading: "", visible: true, error: false,
+    };
+  }
   if (upload) {
     row("import").state = "active";
     const message = upload.phase === "copying"
       ? `Copying video${upload.percent == null ? "" : ` · ${upload.percent}%`}`
       : upload.phase === "opening" ? "Opening video" : "Importing video";
-    return { rows, message, loading: message, error: false, visible: true };
+    row("import").label = message;
+    return { rows: [row("import")], message: "", loading: message, error: false, visible: true };
   }
   if (!project) return { rows, message: "", loading: "", error: false, visible: false };
   row("import").state = "done";
@@ -90,8 +103,11 @@ export function describeProgress(project, { upload = null, exportReady = false }
   });
   if (prepare?.next_job_pending && !active(assistant)) row("assistant").state = "queued";
   const exported = jobs.export;
-  if (active(exported)) row("export").state = exported.status === "queued" ? "queued" : "active";
-  else if (exportReady) row("export").state = "done";
+  if (active(exported)) return {
+    rows: [{ key: "export", label: "Exporting video", state: exported.status === "queued" ? "queued" : "active" }],
+    message: "", loading: "", error: false, visible: true,
+  };
+  if (exportReady) row("export").state = "done";
 
   const running = Object.entries(jobs).find(([, j]) => j.status === "running") ||
     Object.entries(jobs).find(([, j]) => active(j));
@@ -118,6 +134,23 @@ export function describeProgress(project, { upload = null, exportReady = false }
         assistant.stage === "preserved" ? "Saved edit preserved" : "Ready for review";
     else if (prepare?.status === "done") message = "Ready for review";
   }
+  // Keep the recorded stages for diagnostics; present only useful milestones.
+  for (const r of rows) r.hidden = !["preview", "transcript", "pauses", "assistant"].includes(r.key);
+  if (["active", "queued", "error"].includes(row("audio").state))
+    Object.assign(row("preview"), { state: row("audio").state, detail: row("audio").detail });
+  const editing = [row("takes"), row("captions")].find((r) => ["active", "error"].includes(r.state));
+  if (editing && row("assistant").state === "pending") row("assistant").state = editing.state;
+  for (const key of ["transcript", "pauses"]) if (row(key).state === "skipped") row(key).hidden = true;
+  if (running) {
+    const [kind, job] = running;
+    if (kind === "transcribe") for (const r of rows) r.hidden = r.key !== "transcript";
+    else if (kind === "silence") for (const r of rows) r.hidden = r.key !== "pauses";
+    else if (kind === "preview") for (const r of rows) r.hidden = r.key !== "preview";
+    const milestone = job.stage === "audio" || job.stage === "signal" || job.stage === "waveform" || job.stage === "preview"
+      ? "preview" : job.stage === "transcription" ? "transcript" : ["silence", "speech"].includes(job.stage)
+        ? "pauses" : "assistant";
+    message = job.status === "queued" ? "Waiting to start…" : row(milestone).label;
+  }
   return { rows, message, error, visible: !!running || !!prepare?.next_job_pending,
     loading: project.media_ready ? "" : error ? message :
       preview?.stage === "waveform" ? "Preparing audio waveform" : "Preparing video preview" };
@@ -126,7 +159,7 @@ export function describeProgress(project, { upload = null, exportReady = false }
 /** Mount once. Updating text/classes must not replace an animating indicator. */
 export function mountProgress(root, message) {
   const nodes = new Map();
-  for (const [key, label] of STEPS) {
+  function create(key, label) {
     const item = document.createElement("li"), icon = document.createElement("span"),
       text = document.createElement("span");
     item.className = "processing-step";
@@ -135,13 +168,19 @@ export function mountProgress(root, message) {
     text.textContent = label;
     item.append(icon, text);
     root.append(item);
-    nodes.set(key, { item, icon });
+    nodes.set(key, { item, icon, text });
   }
+  for (const [key, label] of STEPS) create(key, label);
   return {
     update(view) {
       root.hidden = !view.visible;
+      const keys = new Set(view.rows.map((r) => r.key));
+      for (const [key, { item }] of nodes) item.hidden = !keys.has(key);
       for (const r of view.rows) {
-        const { item, icon } = nodes.get(r.key);
+        if (!nodes.has(r.key)) create(r.key, r.label);
+        const { item, icon, text } = nodes.get(r.key);
+        item.hidden = !!r.hidden;
+        if (text.textContent !== r.label) text.textContent = r.label;
         if (item.dataset.state !== r.state) item.dataset.state = r.state;
         const symbol = r.state === "done" ? "✓" : r.state === "skipped" ? "–" : r.state === "error" ? "!" : "";
         if (icon.textContent !== symbol) icon.textContent = symbol;
@@ -153,7 +192,7 @@ export function mountProgress(root, message) {
       if (message.textContent !== view.message) message.textContent = view.message;
       message.classList.toggle("error", view.error);
       message.hidden = !view.message || (!view.visible && !view.error) ||
-        view.rows.some((r) => r.state === "active" && r.label === view.message);
+        view.rows.some((r) => !r.hidden && r.state === "active" && r.label === view.message);
     },
   };
 }

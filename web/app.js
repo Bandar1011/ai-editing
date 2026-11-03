@@ -11,8 +11,8 @@ import {
 } from "./timeline.mjs?v=factory-6";
 import { createProduction } from "./production.js?v=factory-7";
 import { mergeOverlayNormalization } from "./overlay-state.mjs?v=factory-6";
-import { describeProgress, mountProgress } from "./progress.mjs?v=factory-8";
-import { createAirDrop, currentExport, exportMatches } from "./delivery.mjs?v=factory-8";
+import { describeProgress, mountProgress } from "./progress.mjs?v=factory-9";
+import { createAirDrop, currentExport, exportMatches } from "./delivery.mjs?v=factory-9";
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s ?? "").replace(
@@ -36,6 +36,7 @@ let selectedClip = null,
   redo = [];
 let uploadState = null;
 let phoneWorking = false;
+let deliveryState = null;
 const processing = mountProgress($("processing-steps"), $("job-status"));
 let dirty = false,
   savePromise = null,
@@ -60,8 +61,9 @@ const phoneDelivery = createAirDrop({
     busy: project && Object.values(project.jobs).some(activeJob) }),
   save: saveNow, api,
   apply: (p) => { project = p; savedEditable = editable(p); renderProject(); },
-  notify: (phase, message) => {
+  notify: (phase, message, details) => {
     phoneWorking = ["preparing", "exporting", "choosing"].includes(phase);
+    deliveryState = phoneWorking ? { phase, ...details } : null;
     $("phone-status").textContent = phoneWorking ? message : "";
     $("send-phone").disabled = phoneWorking || !project || busy() || conflicted;
     if (project) renderJobs();
@@ -113,7 +115,7 @@ canvas = createCanvas({
     updateCaption();
     production.updatePreview();
   },
-  blocked: () => busy() || conflicted,
+  blocked: () => !project || busy() || conflicted,
 });
 
 function time(value, precise = true) {
@@ -345,6 +347,9 @@ async function openProject(id, discard = false) {
 }
 function renderProject() {
   if (!project) return;
+  $("editor").dataset.state = "ready";
+  $("import-button").hidden = false;
+  $("startup-error").hidden = true;
   $("empty-state").hidden = true;
   $("editor").hidden = false;
   $("editor").style.setProperty("--preview-ratio", 9 / 16);
@@ -646,14 +651,15 @@ function renderJobs() {
   $("send-phone").disabled = busy() || conflicted || !project.media_ready || !clips().length;
 }
 function renderProcessing() {
-  const view = describeProgress(project, { upload: uploadState, exportReady: !!currentExport(project) });
+  const view = describeProgress(project, { upload: uploadState, delivery: deliveryState,
+    exportReady: !!currentExport(project) });
   processing.update(view);
   document.querySelector(".processing-status").hidden = !(view.visible || view.error);
   if (view.loading) $("video-loading-message").textContent = view.loading;
   if (uploadState) $("upload-progress").textContent = view.loading;
   $("import-button").disabled = !!uploadState || phoneWorking;
-  $("inspector").inert = !!uploadState || phoneWorking;
-  document.querySelector(".timeline-card").inert = !!uploadState || phoneWorking;
+  $("inspector").inert = !project || !!uploadState || phoneWorking;
+  document.querySelector(".timeline-card").inert = !project || !!uploadState || phoneWorking;
   if (uploadState) {
     $("export-button").disabled = true;
     $("send-phone").disabled = true;
@@ -931,10 +937,11 @@ async function task(kind, plain = false) {
   }
 }
 async function upload(file) {
-  if (!file || uploadState || phoneWorking) return;
+  if (!file || uploadState || phoneWorking || $("editor").dataset.state === "loading") return;
   await saveNow();
   if (conflicted || uploadState) return;
   uploadState = { phase: "copying", percent: null };
+  $("editor").dataset.state = project ? "ready" : "uploading";
   video.pause();
   $("empty-state").hidden = true;
   $("editor").hidden = false;
@@ -978,7 +985,7 @@ async function upload(file) {
     $("upload-overlay").hidden = true;
     $("video-input").value = "";
     if (project) renderProject();
-    else { $("editor").hidden = true; $("empty-state").hidden = false; renderProcessing(); }
+    else showEmpty();
   }
 }
 function act(fn) {
@@ -993,9 +1000,7 @@ function act(fn) {
 
 $("import-button").onclick = () => $("video-input").click();
 $("dropzone").onclick = () => $("video-input").click();
-$("dropzone").onkeydown = (e) => {
-  if (e.key === "Enter" || e.key === " ") $("video-input").click();
-};
+$("retry-startup").onclick = () => location.reload();
 $("video-input").onchange = act((e) => upload(e.target.files[0]));
 $("send-phone").onclick = act(() => phoneDelivery.send());
 document.addEventListener("dragover", (e) => {
@@ -1464,7 +1469,7 @@ function redoEdit() {
 $("undo-button").onclick = undoEdit;
 $("redo-button").onclick = redoEdit;
 document.addEventListener("keydown", (e) => {
-  if (uploadState || phoneWorking) return;
+  if (!project || uploadState || phoneWorking) return;
   if (
     e.target.closest("input,textarea,select,[contenteditable=true]") ||
     $("help-dialog").open ||
@@ -1752,7 +1757,14 @@ function schedulePoll(delay = busy() ? 250 : 1500) {
   }, delay);
 }
 
-await act(async () => {
+function showEmpty() {
+  $("editor").dataset.state = "empty";
+  $("empty-state").hidden = false;
+  $("video-placeholder").hidden = true;
+  renderProcessing();
+}
+
+try {
   health = await api("/api/health");
   await loadProjects();
   const id = new URLSearchParams(location.search).get("project");
@@ -1764,7 +1776,13 @@ await act(async () => {
       projects.find((p) => p.media.height >= p.media.width) ||
       projects[0];
     if (current) await openProject(current.id);
-    else $("import-button").textContent = "Import video";
+    else showEmpty();
   }
-})();
+} catch (error) {
+  if (!project) {
+    $("editor").dataset.state = "error";
+    $("startup-error").hidden = false;
+  }
+  toast(error.message, true);
+}
 schedulePoll(0);

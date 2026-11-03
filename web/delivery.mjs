@@ -30,8 +30,11 @@ export function createAirDrop({ read, save, api, apply, notify, wait = (ms) => n
       if (!id || initial.busy || initial.conflicted || initial.uploading)
         throw new Error("Finish processing and save this edit before sharing.");
       pending = true;
+      let needsExport = !currentExport(initial.project);
+      let exportReady = !needsExport;
+      const emit = (phase, message) => notify(phase, message, { needsExport, exportReady });
       try {
-        notify("preparing", "Preparing video for AirDrop");
+        emit("preparing", needsExport ? "Exporting video" : "Opening AirDrop");
         await save();
         let context = read();
         if (context.project?.id !== id || context.editSequence !== initial.editSequence || context.dirty || context.conflicted)
@@ -44,8 +47,10 @@ export function createAirDrop({ read, save, api, apply, notify, wait = (ms) => n
             throw new Error("The edit changed while preparing AirDrop. Your changes were preserved.");
         };
         let exported = currentExport(context.project);
+        needsExport = !exported;
+        exportReady = !!exported;
         if (!exported) {
-          notify("exporting", "Exporting video for AirDrop");
+          emit("exporting", "Exporting video");
           let response = await api(`/api/projects/${id}/export`, { method: "POST", body: {
             base_revision: context.project.revision, format: "vertical", plain: false,
             burn_subtitles: context.project.subtitle_style.enabled,
@@ -67,8 +72,9 @@ export function createAirDrop({ read, save, api, apply, notify, wait = (ms) => n
         apply(latest);
         exported = currentExport(latest);
         if (!exported) throw new Error("A current export is not available. Export the video and try again.");
+        exportReady = true;
         const filename = exported.file;
-        notify("preparing", "Opening AirDrop");
+        emit("preparing", "Opening AirDrop");
         let result = await api(`/api/projects/${id}/airdrop`, { method: "POST", body: {
           base_revision: latest.revision, file: filename,
           request_id: crypto.randomUUID().replaceAll("-", ""),
@@ -78,17 +84,17 @@ export function createAirDrop({ read, save, api, apply, notify, wait = (ms) => n
         };
         checkResult();
         while (["preparing", "choosing"].includes(result.status)) {
-          notify(result.status, result.message);
+          emit(result.status, result.message);
           await wait(700);
           result = await api(`/api/projects/${id}/airdrop/${result.id}`);
           checkResult();
         }
         if (result.status === "error") throw new Error(result.message);
         if (!["closed", "cancelled"].includes(result.status)) throw new Error("AirDrop did not confirm completion.");
-        notify(result.status, result.message);
+        emit(result.status, result.message);
         return result;
       } catch (error) {
-        notify("error", error.message);
+        emit("error", error.message);
         throw error;
       } finally { pending = false; }
     },

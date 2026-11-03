@@ -9,8 +9,8 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23111'/%3E%3Ctext x='7' y='27' font-family='Arial' font-size='21' font-weight='700' fill='white'%3ERF%3C/text%3E%3C/svg%3E"
       rel="icon"
     />
-    <link href="/static/style.css?v=factory-8" rel="stylesheet" />
-    <script src="/static/app.js?v=factory-8" type="module"></script>
+    <link href="/static/style.css?v=factory-9" rel="stylesheet" />
+    <script src="/static/app.js?v=factory-9" type="module"></script>
   </head>
   <body>
     <div id="app">
@@ -20,7 +20,7 @@
         >
         <div class="header-end">
           <span class="save-status" id="save-status" role="status"></span
-          ><button class="button subtle" id="import-button">
+          ><button class="button subtle" hidden id="import-button">
             Replace video</button
           ><button class="button primary" disabled="" id="export-button">
             Export video
@@ -36,19 +36,7 @@
         </div>
       </header>
       <main>
-        <section class="empty-state" id="empty-state">
-          <h1>Add a video</h1>
-          <div
-            aria-label="Upload a video"
-            class="dropzone"
-            id="dropzone"
-            role="button"
-            tabindex="0"
-          >
-            <strong>Choose a video</strong><span>or drop it here</span>
-          </div>
-        </section>
-        <section class="editor panel-open" hidden="" id="editor">
+        <section class="editor panel-open" data-state="loading" id="editor">
           <div class="editing-grid">
             <div class="preview-column">
               <div class="preview-card">
@@ -76,12 +64,19 @@
                     aria-label="Video preview"
                   >
                     <video id="video" playsinline="" preload="metadata"></video>
+                    <div class="empty-state" hidden id="empty-state">
+                      <button class="dropzone" id="dropzone" type="button">Add video</button>
+                    </div>
+                    <div class="startup-error" hidden id="startup-error" role="status">
+                      <span>Couldn’t load your video</span>
+                      <button class="button subtle" id="retry-startup" type="button">Try again</button>
+                    </div>
                     <div
                       class="reference-overlay"
                       hidden=""
                       id="reference-overlay"
                     ></div>
-                    <div class="video-placeholder" id="video-placeholder">
+                    <div class="video-placeholder" hidden id="video-placeholder">
                       <span class="spinner" aria-hidden="true"></span>
                       <span id="video-loading-message">Preparing preview…</span>
                     </div>
