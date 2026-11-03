@@ -9,8 +9,8 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23111'/%3E%3Ctext x='7' y='27' font-family='Arial' font-size='21' font-weight='700' fill='white'%3ERF%3C/text%3E%3C/svg%3E"
       rel="icon"
     />
-    <link href="/static/style.css?v=factory-4" rel="stylesheet" />
-    <script src="/static/app.js?v=factory-7" type="module"></script>
+    <link href="/static/style.css?v=factory-8" rel="stylesheet" />
+    <script src="/static/app.js?v=factory-8" type="module"></script>
   </head>
   <body>
     <div id="app">
@@ -55,12 +55,15 @@
                 <div class="preview-top">
                   <div class="preview-status">
                     <span class="preview-format">9:16</span>
+                    <div class="processing-status">
+                      <ol id="processing-steps" class="processing-steps" aria-label="Video processing steps"></ol>
                     <div
                       class="job-status"
                       hidden=""
                       id="job-status"
                       role="status"
                     ></div>
+                    </div>
                   </div>
 
                   <button
@@ -74,6 +77,10 @@
                   >
                     ←
                   </button>
+                </div>
+                <div class="delivery-actions">
+                  <button class="button subtle" id="send-phone" disabled>Send to my phone</button>
+                  <span id="phone-status" role="status"></span>
                 </div>
                 <div class="canvas-area">
                   <div
@@ -90,7 +97,12 @@
                       id="reference-overlay"
                     ></div>
                     <div class="video-placeholder" id="video-placeholder">
-                      Preparing preview…
+                      <span class="spinner" aria-hidden="true"></span>
+                      <span id="video-loading-message">Preparing preview…</span>
+                    </div>
+                    <div class="upload-overlay" hidden id="upload-overlay" role="status">
+                      <span class="spinner" aria-hidden="true"></span>
+                      <strong id="upload-progress">Adding video</strong>
                     </div>
                     <div
                       class="caption-overlay"
@@ -614,13 +626,6 @@
       type="file"
     /><input accept="video/*" hidden="" id="video-input" type="file" />
     <input accept=".srt" hidden="" id="srt-input" type="file" />
-    <div class="upload-overlay" hidden="" id="upload-overlay">
-      <div>
-        <span class="spinner"></span>
-        <h2>Adding your video</h2>
-        <p id="upload-progress">Copying to your local workspace…</p>
-      </div>
-    </div>
     <div class="toast" hidden="" id="toast" role="status"></div>
     <dialog id="help-dialog">
       <button aria-label="Close help" class="dialog-close" id="close-help">

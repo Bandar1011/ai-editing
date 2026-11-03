@@ -122,6 +122,7 @@ class TranscribeOptions(BaseModel):
 
 
 class ExportOptions(BaseModel):
+    base_revision: int | None = Field(default=None, ge=1)
     burn_subtitles: bool = True
     label: str = Field(default="", max_length=120)
     plain: bool = False
@@ -346,6 +347,7 @@ class Editor:
                                 "request_key": request_key,
                                 "status": "queued",
                                 "stage": "queued",
+                                "stage_status": "queued",
                                 "message": "Waiting for the media worker",
                                 "queued_at": time.time(),
                                 "started_at": None,
@@ -378,6 +380,7 @@ class Editor:
                         lambda j: j.update(
                             status="running",
                             stage=kind,
+                            stage_status="running",
                             message="Working",
                             started_at=now,
                             queue_seconds=round(now - j["queued_at"], 4),
@@ -398,6 +401,7 @@ class Editor:
                         lambda j: j.update(
                             status="done",
                             stage="done",
+                            stage_status="done",
                             message="Complete",
                             finished_at=finished,
                             seconds=round(finished - j["started_at"], 4),
@@ -410,6 +414,7 @@ class Editor:
                     mutate_job(
                         lambda j: j.update(
                             status="error",
+                            stage_status="error",
                             message=message[-1800:],
                             finished_at=time.time(),
                         )
@@ -449,7 +454,7 @@ class Editor:
                 self.inflight.pop(identifier, None)
                 self.active.discard(identifier)
 
-    def progress(self, identifier, stage, status, reused=False, seconds=0):
+    def progress(self, identifier, stage, status, reused=False, seconds=0, reason=""):
         context = getattr(self.job_context, "current", None)
         if not context or context[0] != identifier:
             return
@@ -459,10 +464,10 @@ class Editor:
             job = project["jobs"].get(kind, {})
             if job.get("id") != job_id:
                 return
-            job.update(stage=stage, message=stage)
-            if status == "done":
+            job.update(stage=stage, stage_status=status, message=stage)
+            if status in {"done", "skipped"}:
                 job["stages"].append(
-                    {"stage": stage, "reused": reused, "seconds": seconds}
+                    {"stage": stage, "status": status, "reused": reused, "seconds": seconds, "reason": reason}
                 )
 
         self.repo.change(identifier, update)
@@ -473,14 +478,22 @@ class Editor:
     def preview(self, identifier: str):
         p = self.repo.load(identifier)
         folder = self.repo.directory(identifier) / "working"
+        self.progress(identifier, "preview", "running")
+
+        def video_ready():
+            self.repo.change(identifier, lambda current: current.update(media_ready=True))
+            self.progress(identifier, "preview", "done")
+            self.progress(identifier, "waveform", "running" if p["media"]["has_audio"] else "skipped",
+                          reason="" if p["media"]["has_audio"] else "No audio")
+
         media.make_proxy(
             self.source(p),
             folder,
             p["media"]["has_audio"],
-            on_video_ready=lambda: self.repo.change(
-                identifier, lambda current: current.update(media_ready=True)
-            ),
+            on_video_ready=video_ready,
         )
+        if p["media"]["has_audio"]:
+            self.progress(identifier, "waveform", "done")
         self.repo.change(
             identifier,
             lambda p: p.update(
@@ -774,6 +787,8 @@ class Editor:
 def create_app(data_dir: Path | None = None, *, assistant_session=True) -> FastAPI:
     editor = Editor(data_dir or Path(os.environ.get("AIEDIT_DATA", ROOT / ".aiedit")))
     from .assistant import Assistant
+    from .delivery import AirDrop, router as delivery_router
+    airdrop = AirDrop(editor)
 
     if assistant_session is not False:
         editor.assistant = Assistant(editor, session=None if assistant_session is True else assistant_session)
@@ -798,11 +813,14 @@ def create_app(data_dir: Path | None = None, *, assistant_session=True) -> FastA
         yield
         if editor.assistant is not None:
             editor.assistant.close()
+        airdrop.close()
         editor.pool.shutdown(wait=False, cancel_futures=True)
 
     app = FastAPI(title="AI Editing", lifespan=lifespan)
     app.state.editor = editor
+    app.state.airdrop = airdrop
     app.include_router(production.router(editor))
+    app.include_router(delivery_router(airdrop))
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 
     @app.middleware("http")
@@ -1049,18 +1067,21 @@ def create_app(data_dir: Path | None = None, *, assistant_session=True) -> FastA
 
     @app.post("/api/projects/{identifier}/export")
     def export(identifier: str, options: ExportOptions):
-        p = editor.repo.load(identifier)
-        return editor.submit(
-            identifier,
-            "export",
-            editor.export,
-            p,
-            options.burn_subtitles,
-            options.label,
-            options.plain,
-            editor.library.resolve(p) if not options.plain else {},
-            options.format,
-        )
+        with editor.repo.lock(identifier):
+            p = editor.repo.load(identifier)
+            if options.base_revision is not None and options.base_revision != p["revision"]:
+                raise HTTPException(409, "The edit changed. Read the latest project before exporting.")
+            return editor.submit(
+                identifier,
+                "export",
+                editor.export,
+                p,
+                options.burn_subtitles,
+                options.label,
+                options.plain,
+                editor.library.resolve(p) if not options.plain else {},
+                options.format,
+            )
 
     @app.get("/api/projects/{identifier}/exports/{filename}")
     def download(identifier: str, filename: str):

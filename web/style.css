@@ -1073,13 +1073,18 @@ body.dragging {
   }
 }
 .upload-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 50;
-  display: grid;
-  place-items: center;
-  background: #ffffffed;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  background: #f3f3f3;
+  color: #111;
   text-align: center;
+  padding: 16px;
 }
 .upload-overlay h2 {
   font-size: 18px;
@@ -1560,9 +1565,57 @@ dialog p {
 }
 .preview-status {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
   min-width: 0;
+}
+.preview-format { flex-shrink: 0; padding-top: 2px; }
+.processing-status { min-width: 0; }
+.processing-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 13px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.processing-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #999;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.step-icon {
+  width: 13px;
+  height: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid #ddd;
+  border-radius: 50%;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.processing-step[data-state="active"] { font-weight: 650; color: #111; }
+.processing-step[data-state="active"] .step-icon {
+  border-top-color: #111;
+  animation: spin .8s linear infinite;
+}
+.processing-step[data-state="done"], .processing-step[data-state="error"] { color: #111; }
+.processing-step[data-state="done"] .step-icon,
+.processing-step[data-state="skipped"] .step-icon { border: 0; }
+.delivery-actions { display: flex; align-items: center; gap: 12px; padding: 0 18px 10px; }
+.delivery-actions .button { font-size: 12px; }
+#phone-status { font-size: 12px; color: #666; }
+.uploading .transport { pointer-events: none; opacity: .4; }
+.uploading-empty .editing-grid { grid-template-columns: minmax(0, 1fr); }
+.uploading-empty .inspector, .uploading-empty .timeline-card, .uploading-empty .transport { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .spinner, .processing-step[data-state="active"] .step-icon { animation: none; }
 }
 .preview-status .job-status {
   padding: 0;

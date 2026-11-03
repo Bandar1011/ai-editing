@@ -199,6 +199,9 @@ def prepare(editor, identifier, options):
             "This project already has captions. Use the explicit Generate action to replace them, or prepare a new clip."
         )
     analysis = editor.analysis(identifier)
+    def skip(stages, reason):
+        for stage in stages:
+            editor.progress(identifier, stage, "skipped", reason=reason)
     if (
         before.get("preparation_key")
         and before.get("captions_authored", False)
@@ -208,9 +211,13 @@ def prepare(editor, identifier, options):
             or before.get("transcript", {}).get("language") == options.language
         )
     ):
+        skip(("audio", "signal", "transcription", "silence", "speech", "retakes"), "Saved edit preserved")
         editor.progress(identifier, stage="apply", status="done", reused=True)
         return
     if not before["media"]["has_audio"] or analysis.silent():
+        skip(("transcription", "silence", "speech", "retakes", "apply"), "No speech")
+        if not before["media"]["has_audio"]:
+            skip(("audio", "signal"), "No audio")
         signature = key_for(
             {
                 "source": analysis.source_key,
@@ -257,8 +264,11 @@ def prepare(editor, identifier, options):
         warnings.append(
             "Speech detection is not installed; pause cuts use amplitude and transcript gaps."
         )
+        editor.progress(identifier, "speech", "done", reason="Using transcript gaps")
     fillers = story.filler_cuts(words) if options.remove_fillers else []
     candidates = analysis.retakes(words) if options.choose_retakes else []
+    if not options.choose_retakes:
+        editor.progress(identifier, "retakes", "skipped", reason="Take comparison disabled")
     signature = key_for(
         {
             "schema": CONTRACTS["prepare"],
@@ -274,6 +284,7 @@ def prepare(editor, identifier, options):
         current = editor.repo.load(identifier)
         # An identical completed request must not regroup approved text or reset edits.
         if current.get("preparation_key") == signature:
+            editor.progress(identifier, "apply", "done", reused=True)
             return
         if current["subtitles"] != before["subtitles"]:
             raise ValueError(
@@ -311,6 +322,7 @@ def prepare(editor, identifier, options):
             )
 
         editor.repo.change(identifier, update)
+        editor.progress(identifier, "apply", "done")
 
 
 def normalize_overlays(current, submitted, library):

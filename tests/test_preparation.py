@@ -108,7 +108,11 @@ def test_repeated_preparation_and_grouping_reuse_raw_analysis(
     p = prepare_video(client, editor, p, language="en", max_words=1)
     assert all(len(c["text"].split()) == 1 for c in p["subtitles"])
     assert calls == ["en"]
-    assert all(stage["reused"] for stage in p["jobs"]["prepare"]["stages"])
+    stages = p["jobs"]["prepare"]["stages"]
+    cached = {"audio", "signal", "transcription", "silence", "retakes"}
+    assert cached <= {stage["stage"] for stage in stages}
+    assert all(stage["reused"] for stage in stages if stage["stage"] in cached)
+    assert any(stage["stage"] == "apply" and stage["status"] == "done" for stage in stages)
 
 
 def test_authored_caption_and_restored_range_survive_identical_prepare(prepared_client):

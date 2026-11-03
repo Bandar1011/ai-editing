@@ -11,6 +11,8 @@ import {
 } from "./timeline.mjs?v=factory-6";
 import { createProduction } from "./production.js?v=factory-7";
 import { mergeOverlayNormalization } from "./overlay-state.mjs?v=factory-6";
+import { describeProgress, mountProgress } from "./progress.mjs?v=factory-8";
+import { createAirDrop, currentExport, exportMatches } from "./delivery.mjs?v=factory-8";
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
   String(s ?? "").replace(
@@ -32,6 +34,9 @@ let selectedClip = null,
   selectedSubtitle = null,
   undo = [],
   redo = [];
+let uploadState = null;
+let phoneWorking = false;
+const processing = mountProgress($("processing-steps"), $("job-status"));
 let dirty = false,
   savePromise = null,
   saveTimer = null,
@@ -50,6 +55,18 @@ let lastTab = "auto",
   selectedLayer = null,
   canvas;
 const ownJobs = new Set();
+const phoneDelivery = createAirDrop({
+  read: () => ({ project, dirty, conflicted, editSequence, uploading: !!uploadState,
+    busy: project && Object.values(project.jobs).some(activeJob) }),
+  save: saveNow, api,
+  apply: (p) => { project = p; savedEditable = editable(p); renderProject(); },
+  notify: (phase, message) => {
+    phoneWorking = ["preparing", "exporting", "choosing"].includes(phase);
+    $("phone-status").textContent = message;
+    $("send-phone").disabled = phoneWorking || !project || busy() || conflicted;
+    if (project) renderJobs();
+  },
+});
 const production = createProduction({
   getProject: () => project,
   applyProject: (p) => {
@@ -158,7 +175,7 @@ function editable(p = project) {
 }
 function busy() {
   return (
-    project && Object.values(project.jobs).some(activeJob)
+    !!uploadState || phoneWorking || (project && Object.values(project.jobs).some(activeJob))
   );
 }
 function activeJob(job) {
@@ -341,10 +358,6 @@ function renderProject() {
     video.load();
   }
   $("video-placeholder").hidden = project.media_ready;
-  $("video-placeholder").innerHTML =
-    project.jobs.preview?.status === "error"
-      ? "Preview could not be prepared. Check the operation message."
-      : '<span class="spinner"></span>Preparing your preview…';
   $("threshold").value = project.silence_options.threshold_db;
   $("threshold-value").textContent =
     `${project.silence_options.threshold_db} dB`;
@@ -389,26 +402,7 @@ function renderExport() {
   const exported = project.exports.at(-1);
   $("export-result").hidden = !exported;
   if (!exported) return;
-  const current = {
-    cuts: project.cuts,
-    split_points: project.split_points,
-    subtitles: project.subtitles,
-    subtitle_style: project.subtitle_style,
-    overlays: project.overlays,
-    punches: project.punches,
-    music: project.music,
-    story: project.story,
-  };
-  const matches =
-    exported.edit_state &&
-    Object.entries(current).every(
-      ([key, value]) =>
-        JSON.stringify(
-          exported.edit_state[key] ?? (key === "split_points" ? [] : null),
-        ) === JSON.stringify(value),
-    ) &&
-    JSON.stringify(exported.brief) === JSON.stringify(project.brief) &&
-    JSON.stringify(exported.references) === JSON.stringify(project.references);
+  const matches = exportMatches(project, exported);
   $("export-result").innerHTML =
     `<span>${matches ? "✓ Export ready" : "Previous export"} <span class="muted">· ${time(exported.duration, false)}</span></span><a download href="/api/projects/${project.id}/exports/${exported.file}">Download video ↗</a>`;
 }
@@ -620,51 +614,23 @@ function renderTimeline() {
 }
 
 function renderJobs() {
+  renderProcessing();
   const running = Object.entries(project.jobs).find(
     ([, j]) => j.status === "running",
   ) || Object.entries(project.jobs).find(([, j]) => activeJob(j));
-  const latest = Object.entries(project.jobs).sort(
-    (a, b) => (b[1].queued_at || b[1].started_at || 0) - (a[1].queued_at || a[1].started_at || 0),
-  )[0];
   const assistant = project.jobs.assistant;
-  const aiCurrent = assistant && assistant.preparation_key === project.preparation_key;
-  const error = aiCurrent && assistant.status === "error"
-    ? ["assistant", assistant] : latest?.[1].status === "error" ? latest : null;
-  const names = {
-    preview: "Preparing preview",
-    audio: "Preparing audio",
-    silence: "Detecting quiet",
-    speech: "Detecting speech",
-    transcribe: "Transcribing",
-    transcription: "Transcribing",
-    retakes: "Comparing takes",
-    signal: "Checking audio",
-    apply: "Applying edit",
-    export: "Exporting",
-    prepare: "Preparing video",
-    assistant: "AI editing",
-  };
-  const prepared = latest?.[0] === "prepare" && latest[1].status === "done";
-  const aiDone = aiCurrent && assistant.status === "done";
-  $("job-status").hidden = !running && !error && !prepared && !aiDone;
-  $("job-status").classList.toggle("error", !running && !!error);
-  $("job-status").innerHTML = running
-    ? `<span class="spinner"></span>${running[1].status === "queued" ? (running[0] === "assistant" ? "AI queued" : "Queued") : running[0] === "assistant" ? esc(running[1].message) : names[running[1].stage] || names[running[0]]} · ${time(Date.now() / 1000 - (running[1].started_at || running[1].queued_at || Date.now() / 1000), false)}`
-    : error
-      ? (error[0] === "assistant" ? "AI editing stopped" : esc(error[1].message))
-      : aiDone ? (assistant.stage === "preserved" ? "Saved edit preserved" : assistant.outcome === "needs_review" ? "Review needed" : "Ready for review")
-      : prepared ? (project.preparation_kind === "visual" ? "Ready · no speech" : "Ready for edit") : "";
+  const aiCurrent = assistant && project.preparation_key && assistant.preparation_key === project.preparation_key;
   $("retry-assistant").hidden = !aiCurrent || (assistant.status !== "error" && assistant.outcome !== "needs_review");
   $("retry-assistant").disabled = !!running || conflicted || dirty;
   $("assistant-result").hidden = !aiCurrent;
   $("assistant-details").innerHTML = assistant
     ? `<p>${esc(assistant.message)}</p>${(assistant.review_notes || []).length ? `<ul>${assistant.review_notes.map(note => `<li>${esc(note)}</li>`).join("")}</ul>` : ""}` : "";
-  $("export-button").disabled = !!running || conflicted || dirty;
-  $("plain-export-button").disabled = !!running || conflicted || dirty;
+  $("export-button").disabled = busy() || conflicted || dirty;
+  $("plain-export-button").disabled = busy() || conflicted || dirty;
   $("analyze-button").disabled =
-    !!running || !project.media.has_audio || conflicted;
+    busy() || !project.media.has_audio || conflicted;
   $("transcribe-button").disabled =
-    !!running ||
+    busy() ||
     !project.media.has_audio ||
     !health.transcription_ready ||
     !health.whisper_ready ||
@@ -674,9 +640,23 @@ function renderJobs() {
     : "";
   $("silence-settings").disabled = !!running;
   $("prepare-button").disabled =
-    (!!running && !previewOnly()) ||
+    (busy() && !previewOnly()) ||
     conflicted ||
     (project.media.has_audio && (!health.transcription_ready || !health.whisper_ready));
+  $("send-phone").disabled = busy() || conflicted || !project.media_ready || !clips().length;
+}
+function renderProcessing() {
+  const view = describeProgress(project, { upload: uploadState, exportReady: !!currentExport(project) });
+  processing.update(view);
+  if (view.loading) $("video-loading-message").textContent = view.loading;
+  if (uploadState) $("upload-progress").textContent = view.loading;
+  $("import-button").disabled = !!uploadState || phoneWorking;
+  $("inspector").inert = !!uploadState || phoneWorking;
+  document.querySelector(".timeline-card").inert = !!uploadState || phoneWorking;
+  if (uploadState) {
+    $("export-button").disabled = true;
+    $("send-phone").disabled = true;
+  }
 }
 function updateSummary() {
   if (!project) return;
@@ -690,7 +670,7 @@ function updateSummary() {
   const empty = !clips().length;
   video.style.visibility = empty ? "hidden" : "";
   $("video-placeholder").hidden = project.media_ready && !empty;
-  if (empty) $("video-placeholder").textContent = "No clips";
+  if (empty) $("video-loading-message").textContent = "No clips";
   $("export-button").disabled = busy() || conflicted || dirty || empty;
   updateClipActions();
   renderExport();
@@ -923,6 +903,7 @@ async function task(kind, plain = false) {
       label: $("export-label").value,
       plain,
       format: "vertical",
+      base_revision: project.revision,
     };
   if (kind !== "export") pushUndo();
   const jobKind = kind === "assistant/retry" ? "assistant" : kind;
@@ -949,10 +930,18 @@ async function task(kind, plain = false) {
   }
 }
 async function upload(file) {
-  if (!file) return;
+  if (!file || uploadState || phoneWorking) return;
   await saveNow();
+  if (conflicted || uploadState) return;
+  uploadState = { phase: "copying", percent: null };
+  video.pause();
+  $("empty-state").hidden = true;
+  $("editor").hidden = false;
+  $("editor").style.setProperty("--preview-ratio", 9 / 16);
+  $("editor").classList.toggle("uploading-empty", !project);
+  $("editor").classList.add("uploading");
   $("upload-overlay").hidden = false;
-  $("upload-progress").textContent = "Copying to your local workspace…";
+  renderProcessing();
   try {
     const form = new FormData();
     form.append("file", file);
@@ -960,10 +949,10 @@ async function upload(file) {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/projects/upload");
       xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable)
-          $("upload-progress").textContent =
-            `${Math.round((e.loaded / e.total) * 100)}% copied`;
+        if (e.lengthComputable) uploadState.percent = Math.round((e.loaded / e.total) * 100);
+        renderProcessing();
       };
+      xhr.upload.onload = () => { uploadState.phase = "importing"; renderProcessing(); };
       xhr.onerror = () =>
         reject(new Error("The upload could not reach the local editor."));
       xhr.onload = () => {
@@ -979,10 +968,16 @@ async function upload(file) {
       };
       xhr.send(form);
     });
+    uploadState.phase = "opening";
+    renderProcessing();
     await openProject(result.id);
   } finally {
+    uploadState = null;
+    $("editor").classList.remove("uploading", "uploading-empty");
     $("upload-overlay").hidden = true;
     $("video-input").value = "";
+    if (project) renderProject();
+    else { $("editor").hidden = true; $("empty-state").hidden = false; renderProcessing(); }
   }
 }
 function act(fn) {
@@ -1001,6 +996,7 @@ $("dropzone").onkeydown = (e) => {
   if (e.key === "Enter" || e.key === " ") $("video-input").click();
 };
 $("video-input").onchange = act((e) => upload(e.target.files[0]));
+$("send-phone").onclick = act(() => phoneDelivery.send());
 document.addEventListener("dragover", (e) => {
   if (e.dataTransfer.types.includes("Files")) {
     e.preventDefault();
@@ -1467,6 +1463,7 @@ function redoEdit() {
 $("undo-button").onclick = undoEdit;
 $("redo-button").onclick = redoEdit;
 document.addEventListener("keydown", (e) => {
+  if (uploadState || phoneWorking) return;
   if (
     e.target.closest("input,textarea,select,[contenteditable=true]") ||
     $("help-dialog").open ||
@@ -1721,7 +1718,7 @@ async function poll() {
     project = p;
     savedEditable = editable(p);
     renderProject();
-    if (finishedExport) openExport();
+    if (finishedExport && !phoneWorking) openExport();
     for (const [kind, job] of Object.entries(p.jobs)) {
       if (activeJob(was[kind]) && job.status === "done") {
         ownJobs.delete(kind);
