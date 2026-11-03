@@ -1,12 +1,15 @@
 import hashlib
 import json
 import time
+import threading
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
 
 from aiedit import delivery
-from aiedit.server import create_app
+from aiedit.assistant import Assistant
+from aiedit.server import ExportOptions, create_app
 from test_media_and_api import recording, wait_for  # noqa: F401
 
 
@@ -142,3 +145,53 @@ def test_recorded_preview_has_real_stage_completions(exported_client):
         "preview",
         "waveform",
     }
+
+
+def test_export_does_not_deadlock_against_ai_start(exported_client, monkeypatch):
+    client, editor, p, _ = exported_client
+    editor.assistant = Assistant(editor, session=lambda run: {"summary": "Unused", "review_notes": []})
+    original_lock = editor.repo.lock
+    original_running = editor.assistant.is_running
+    ai_has_lock, export_check = threading.Event(), threading.Event()
+    errors = []
+
+    @contextmanager
+    def controlled_lock(identifier):
+        lock = original_lock(identifier)
+        if threading.current_thread().name == "ai-start":
+            ai_has_lock.set()
+            assert export_check.wait(3)
+            if not lock.acquire(timeout=1):
+                raise TimeoutError("AI start could not acquire the project lock during export")
+        else:
+            lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
+
+    def checking(identifier):
+        export_check.set()
+        assert ai_has_lock.wait(3)
+        return original_running(identifier)
+
+    monkeypatch.setattr(editor.repo, "lock", controlled_lock)
+    monkeypatch.setattr(editor.assistant, "is_running", checking)
+    endpoint = next(r.endpoint for r in client.app.routes if getattr(r, "path", "") == "/api/projects/{identifier}/export")
+
+    def invoke(function):
+        try:
+            function()
+        except Exception as error:
+            errors.append(error)
+
+    ai = threading.Thread(name="ai-start", target=lambda: invoke(lambda: editor.assistant.start(p["id"], "http://127.0.0.1/tools")), daemon=True)
+    export = threading.Thread(name="export-request", target=lambda: invoke(lambda: endpoint(p["id"], ExportOptions(base_revision=p["revision"], format="vertical"))), daemon=True)
+    ai.start()
+    assert ai_has_lock.wait(3)
+    export.start()
+    ai.join(4)
+    export.join(4)
+    assert not ai.is_alive() and not export.is_alive()
+    assert not errors, [str(error) for error in errors]
+    wait_for(editor, p["id"])

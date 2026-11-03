@@ -93,3 +93,31 @@ test("a double click starts one native sharing request", async () => {
   await first;
   assert.equal(posts, 1);
 });
+
+test("missing export is rendered once and the resulting immutable file is shared", async () => {
+  const { project, context, exported } = fixture();
+  project.exports = [];
+  const server = structuredClone(project), calls = [];
+  const controller = createAirDrop({ read: () => context, save: async () => {},
+    apply: (p) => { context.project = p; }, notify() {}, wait: async () => {},
+    api: async (path, options) => {
+      calls.push([path, options]);
+      if (path.endsWith("/export")) {
+        assert.equal(options.body.base_revision, 8);
+        server.jobs.export = { id: "export-job", status: "queued" };
+        server.revision++;
+      } else if (path.endsWith("/status")) {
+        server.jobs.export.status = "done";
+        server.exports.push(exported);
+        server.revision++;
+      } else if (path.endsWith("/airdrop")) {
+        assert.equal(options.body.file, exported.file);
+        assert.equal(options.body.base_revision, server.revision);
+        return { id: "native", project_id: project.id, file: exported.file, status: "shared", message: "Shared through AirDrop" };
+      }
+      return structuredClone(server);
+    } });
+  assert.equal((await controller.send()).status, "shared");
+  assert.equal(calls.filter(([p]) => p.endsWith("/export")).length, 1);
+  assert.equal(calls.filter(([p]) => p.endsWith("/airdrop")).length, 1);
+});

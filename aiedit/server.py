@@ -293,6 +293,8 @@ class Editor:
         after_preview=False,
         request_key=None,
         after_success=None,
+        expected_revision=None,
+        snapshot_args=None,
     ) -> dict:
         if self.assistant is not None and self.assistant.is_running(identifier):
             current = self.repo.load(identifier)
@@ -304,6 +306,8 @@ class Editor:
             raise HTTPException(409, "Wait for AI editing to finish before starting another operation.")
         with self.repo.lock(identifier):
             current = self.repo.load(identifier)
+            if expected_revision is not None and expected_revision != current["revision"]:
+                raise HTTPException(409, "The edit changed. Read the latest project before exporting.")
             if current["jobs"].get("prepare", {}).get("next_job_pending") or current["jobs"].get("assistant", {}).get("status") in {"queued", "running"}:
                 if (
                     kind == "prepare" and request_key
@@ -311,6 +315,8 @@ class Editor:
                 ):
                     return current
                 raise HTTPException(409, "Wait for AI editing to finish before starting another operation.")
+            if snapshot_args is not None:
+                args = snapshot_args(current)
             job_id = uuid.uuid4().hex
             predecessor = None
             with self.job_lock:
@@ -1067,21 +1073,20 @@ def create_app(data_dir: Path | None = None, *, assistant_session=True) -> FastA
 
     @app.post("/api/projects/{identifier}/export")
     def export(identifier: str, options: ExportOptions):
-        with editor.repo.lock(identifier):
-            p = editor.repo.load(identifier)
-            if options.base_revision is not None and options.base_revision != p["revision"]:
-                raise HTTPException(409, "The edit changed. Read the latest project before exporting.")
-            return editor.submit(
-                identifier,
-                "export",
-                editor.export,
+        return editor.submit(
+            identifier,
+            "export",
+            editor.export,
+            expected_revision=options.base_revision,
+            snapshot_args=lambda p: (
                 p,
                 options.burn_subtitles,
                 options.label,
                 options.plain,
                 editor.library.resolve(p) if not options.plain else {},
                 options.format,
-            )
+            ),
+        )
 
     @app.get("/api/projects/{identifier}/exports/{filename}")
     def download(identifier: str, filename: str):
