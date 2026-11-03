@@ -42,7 +42,7 @@ export function describeProgress(project, { upload = null, delivery = null, expo
         ...(delivery.needsExport ? [{ key: "export", label: "Exporting video", state: exporting ? "active" : "done" }] : []),
         { key: "phone", label: exporting ? "Choose your iPhone" : label, state: exporting ? "pending" : "active" },
       ],
-      message: delivery.phase === "choosing" ? "Choose your iPhone in AirDrop" : "",
+      message: "",
       loading: "", visible: true, error: false,
     };
   }
@@ -143,10 +143,14 @@ export function describeProgress(project, { upload = null, delivery = null, expo
   for (const key of ["transcript", "pauses"]) if (row(key).state === "skipped") row(key).hidden = true;
   if (running) {
     const [kind, job] = running;
-    if (kind === "transcribe") for (const r of rows) r.hidden = r.key !== "transcript";
+    if (kind === "transcribe") {
+      for (const r of rows) r.hidden = r.key !== "transcript";
+      row("transcript").state = job.status === "queued" ? "queued" : "active";
+    }
     else if (kind === "silence") for (const r of rows) r.hidden = r.key !== "pauses";
     else if (kind === "preview") for (const r of rows) r.hidden = r.key !== "preview";
-    const milestone = job.stage === "audio" || job.stage === "signal" || job.stage === "waveform" || job.stage === "preview"
+    const milestone = kind === "transcribe" ? "transcript" : kind === "silence" ? "pauses" : kind === "preview" ? "preview" :
+      job.stage === "audio" || job.stage === "signal" || job.stage === "waveform" || job.stage === "preview"
       ? "preview" : job.stage === "transcription" ? "transcript" : ["silence", "speech"].includes(job.stage)
         ? "pauses" : "assistant";
     message = job.status === "queued" ? "Waiting to start…" : row(milestone).label;

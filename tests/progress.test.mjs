@@ -15,7 +15,7 @@ test("AirDrop progress excludes completed editing and only offers export when ne
   const ready = describeProgress(p, { delivery: { phase: "choosing", needsExport: false } });
   assert.deepEqual(ready.rows.map((r) => r.label), ["Choose your iPhone"]);
   assert.equal(state(ready, "phone"), "active");
-  assert.equal(ready.message, "Choose your iPhone in AirDrop");
+  assert.equal(ready.message, "");
   const opening = describeProgress(p, { delivery: { phase: "preparing", needsExport: true, exportReady: true } });
   assert.equal(state(opening, "export"), "done");
   assert.equal(state(opening, "phone"), "active");
@@ -33,6 +33,17 @@ test("preparation groups technical stages into four useful milestones", () => {
     ["Preparing video", "Transcribing speech", "Removing pauses", "Editing video"]);
   assert.equal(state(v, "preview"), "active");
   assert.equal(v.message, "Preparing video");
+});
+
+test("standalone transcription always shows its current operation during audio prep and setup", () => {
+  for (const stage of ["audio", "transcribe", "transcription"]) {
+    const v = describeProgress(project({ transcribe: { status: "running", stage, stages: [] } }));
+    const shown = v.rows.filter((r) => !r.hidden);
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0].key, "transcript");
+    assert.equal(shown[0].state, "active");
+    assert.equal(v.message, shown[0].label);
+  }
 });
 
 test("cached audio revisits do not erase completed transcription or fake the next active step", () => {
