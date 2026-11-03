@@ -53,19 +53,6 @@
             <div class="preview-column">
               <div class="preview-card">
                 <div class="preview-top">
-                  <div class="preview-status">
-                    <span class="preview-format">9:16</span>
-                    <div class="processing-status" hidden>
-                      <ol id="processing-steps" class="processing-steps" aria-label="Video processing steps"></ol>
-                    <div
-                      class="job-status"
-                      hidden=""
-                      id="job-status"
-                      role="status"
-                    ></div>
-                    </div>
-                  </div>
-
                   <button
                     aria-controls="inspector"
                     aria-expanded="true"
@@ -79,6 +66,8 @@
                   </button>
                 </div>
                 <div class="canvas-area">
+                  <div class="preview-content">
+                    <div class="phone-column">
                   <div
                     class="video-stage"
                     id="video-stage"
@@ -115,6 +104,12 @@
                   <div class="delivery-actions">
                     <button class="button subtle" id="send-phone" disabled>Send to my phone</button>
                     <span id="phone-status" class="sr-only" role="status"></span>
+                  </div>
+                    </div>
+                    <div class="processing-status" hidden>
+                      <ol id="processing-steps" class="processing-steps" aria-label="Video processing steps"></ol>
+                      <div class="job-status" hidden id="job-status" role="status"></div>
+                    </div>
                   </div>
                 </div>
                 <div class="transport">
