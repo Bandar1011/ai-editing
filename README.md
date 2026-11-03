@@ -1,109 +1,172 @@
 # Reels Factory
 
-A local video workspace for Codex: transcribe one clip, shape the story, render a plain cut, then review each encoded version with its own captions and timecoded feedback.
+Turn a raw talking-head video into a vertical reel: remove pauses, create short captions, add an opening title, and include relevant screenshots or B-roll. Review and adjust the result in a local browser editor before exporting.
 
-## Run on this Mac
+**Video processing runs on your computer. Codex handles editorial decisions using your ChatGPT sign-in.** No model API key is required, but AI editing needs internet access and uses your account's Codex access and limits.
+
+## Set it up
+
+The primary setup is **Apple Silicon macOS**. You need [Homebrew](https://brew.sh/), Python 3.12 or newer (uv can install it), and a ChatGPT account with Codex access. Linux requires equivalent media tools and an installed font; AirDrop and iOS Simulator capture require macOS.
+
+### 1. Install the tools and clone the repo
 
 ```sh
-uv run python scripts/doctor.py
-./start.sh
+brew install uv ffmpeg-full whisper.cpp
+brew install --cask codex
+
+git clone https://github.com/Bandar1011/ai-editing.git
+cd ai-editing
+uv sync --locked --group dev
 ```
 
-Open **http://127.0.0.1:8775**. Import a video through the browser or give Codex its absolute file path. The app and chat use the same revision-checked API.
+FFmpeg needs **libass** to render captions; the app automatically finds Homebrew's `ffmpeg-full`. `whisper.cpp` supplies local speech recognition and word timing. There is no frontend build step, database service, or Docker requirement.
 
-## What works
+For other Codex installation options, see the [official CLI guide](https://learn.chatgpt.com/docs/codex/cli).
 
-- Original footage is copied into a separate source folder and stays unchanged.
-- Local multilingual whisper.cpp transcription with DTW word alignment produces source-time words and a raw transcript, separate from editable 1–3-word captions.
-- Silence detection, manual source-time cuts, draggable boundaries, restore switches, undo/redo, and transcript-driven “Cut speech” actions.
-- Editable caption wording, timing, size, position, and UTF-8 SRT import. Arabic and other spoken languages are retained.
-- One-click first cuts combine speech-gap and quiet-interval cuts, isolated hesitation removal, and evidence-based retake selection. Ambiguous deliveries remain reviewable.
-- Shared presets keep title and caption sizes consistent. Titles use at most two lines at a fixed font size; overlong wording requires rewriting. Speech-gap settings are deterministic. The agent handles editorial choices, contextual reference placement, and review exceptions.
-- A project brief, original hook patterns, user-supplied performance history, and CTA planning.
-- A searchable local asset/mood library, deduplicated inbox import, and bounded yt-dlp media downloads.
-- Timed real screenshot/B-roll overlays, audio clips, optional punch-ins, and looping music with voice-priority ducking. Video-overlay audio is optional and has its own gain.
-- Still references remain continuous across cuts. Use insets near the presenter's gesture when appropriate; full-screen placement is an editorial choice rather than a default.
-- A single-video monochrome editor with a phone-sized 9:16 preview. Only populated tracks appear below video and original audio. Split, delete, and trim linked clips directly; extend an edge to recover footage, double-click to restore it, or undo.
-- One collapsible tools panel contains Auto Edit, Media, and Captions. Select a caption or visual overlay on its timeline or directly in the preview, then drag it or use arrow keys to move it (Shift moves ten pixels). Positions persist, support undo/redo, and carry through to exports. Exported videos open in a separate dialog.
-- Same-laptop app screenshots/recordings through an owned Simulator lease and fingerprinted build reuse. Read the [capture requirements](docs/minimal-workflow.md#app-references-on-this-mac).
-- Plain and captioned exports retain source resolution and frame rate. Browser exports use an exact 9:16 center crop; the API and CLI also support native aspect ratio. Captions are remapped to the edited timeline.
-- HLG/PQ camera footage retains its HDR transfer, BT.2020 color, and 10-bit depth in HEVC previews and exports. SDR footage uses H.264. Reference graphics default to 203-nit white; title overlays can use 1000-nit white independently, without grading the footage. Edited exports are re-encoded; originals remain unchanged. HDR playback requires a compatible browser and display.
-- Each version keeps its own MP4, SRT, SHA-256 checksum, edit snapshot, source ranges, brief, and asset-source manifest. Later edits do not change earlier exports.
-- Encoded-version playback and timecoded notes recording the requested change and reason. Link a correction to a later export. Search feedback across projects; one-edit notes and reusable preferences are distinct.
-- Agent CLI, local job status, recovery after interrupted jobs, and protection against overwriting concurrent browser edits.
-
-Each project has one main talking-head clip plus image/video references and music. Target duration/format brief fields describe intent; the browser explicitly requests vertical exports. The original footage stays intact. Generative B-roll, presenter matting, and elaborate motion graphics are outside this minimal workflow. Recognition and retake scores need review, especially names, changed wording, intentional repetition, and noisy speech. Browser captions and mixing are approximate; the encoded candidate is authoritative.
-
-## Fresh installation
-
-Python 3.12+, [uv](https://docs.astral.sh/uv/), FFmpeg with libass, and [whisper.cpp](https://github.com/ggml-org/whisper.cpp) are required. On Apple Silicon macOS:
+### 2. Download the local speech models
 
 ```sh
-brew install uv ffmpeg-full whisper.cpp yt-dlp
-uv sync --locked --group dev
 uv run python scripts/setup_model.py
 uv run python scripts/setup_vad.py
+```
+
+These download and checksum-verify the multilingual Whisper base model and the Silero speech detector. Whisper transcribes speech; Silero helps locate speech boundaries for tighter cuts. Model downloads happen during setup, not for every video. Silero is optional, but recommended; without its model, the editor reports that it is using recognition gaps instead.
+
+### 3. Sign into Codex and check the setup
+
+```sh
+codex login
+codex login status
 uv run python scripts/doctor.py
+```
+
+Complete the browser sign-in with **ChatGPT**. The editing runner requires ChatGPT authentication; API-key sign-in is not used. `doctor.py` checks the media binaries, caption support, and Whisper model. Check Codex sign-in separately with `codex login status`. See [OpenAI's authentication guide](https://learn.chatgpt.com/docs/auth) for sign-in help.
+
+### 4. Start the editor
+
+```sh
 ./start.sh
 ```
 
-Model setup downloads the official multilingual Whisper base model and verifies its checksum. Word timing uses whisper.cpp DTW (`--dtw base -nfa -ojf`); the installed 1.9.5 CLI was exercised locally. No separate heavy alignment engine is required for the default model. `AIEDIT_MODEL` can select another compatible local model. The app prefers Homebrew's `ffmpeg-full` for caption support, then falls back to `PATH`. Linux can use distribution FFmpeg with libass and an installed whisper.cpp CLI.
+Open [127.0.0.1:8775](http://127.0.0.1:8775). Leave the terminal running; press **Ctrl+C** to stop. On later visits, run `./start.sh` again. Your saved project reopens on refresh.
 
-The optional, checksum-verified Silero detector finds speech activity locally. With it installed, cuts combine speech activity with mono quiet-interval analysis, using 25 ms shoulders and a 120 ms minimum pause. Without it, the editor reports the fallback to recognition gaps. Neither detector establishes whether a sound is a word; review the joins.
+## Make your first edit
 
-Optional environment variables: `AIEDIT_PORT` (default `8775`), `AIEDIT_DATA` (default `.aiedit/`), `AIEDIT_MODEL`, `AIEDIT_DTW_MODEL` (matching alignment preset for custom models), `AIEDIT_VAD_MODEL`, and `AIEDIT_URL` for the agent client. The server always binds to `127.0.0.1`. Local API documentation is at `/docs`.
+1. Click **Add video** inside the phone preview, or drop a video onto the page. The original is copied into private project storage; a playable preview and waveform are generated.
+2. Click **Prepare video** in **Auto Edit**. Local processing transcribes speech, finds pauses and repeated takes, and creates short captions. Codex starts automatically afterward to make editorial decisions. You do not need to send a separate chat prompt.
+3. Review the preview and **AI edit details**, including any unresolved notes. Edit captions, split or delete linked video/audio clips, and drag clip edges to recover trimmed footage. Select an added caption or overlay to move it in the preview. Undo remains available.
+4. Click **Export video** when ready. Browser exports are vertical 9:16; every export keeps its own video, captions, and edit snapshot. On a Mac, **Send to my phone** creates or reuses a current export and opens AirDrop so you can choose your iPhone.
 
-## Direct from chat or terminal
+Progress appears to the right of the phone only while work is happening. Tracks for captions, overlays, music, effects, or added audio appear only when that content exists.
+
+Want to try it without personal footage? On macOS, `uv run python scripts/create_demo.py --minimal` creates a clearly generated sample. Import the path it prints.
+
+## What the AI actually does
+
+The workflow is the same for each video. Code owns the repeatable operations; Codex makes the decisions that depend on the content.
+
+| Code handles | Codex handles |
+| --- | --- |
+| Extracting audio, local transcription, and word alignment | Correcting clear transcription mistakes without inventing speech |
+| Detecting pauses, proposing cuts, and finding repeated takes | Choosing supported takes and flagging ambiguous deliveries |
+| Fixed caption sizes, 1–3-word caption groups, and title formatting | Writing a truthful opening title, at most two lines |
+| Rendering overlays, mixing audio, and encoding exports | Choosing useful references and deciding where they belong on screen |
+| Caching completed analysis and preserving revisions | Reporting missing assets, uncertainty, and anything needing review |
+
+Titles use a fixed 2.5-second opening duration. Caption and title styling, pause thresholds, and reference sound defaults live in [aiedit/presets.py](aiedit/presets.py). Editing instructions live in [editor.md](editor.md); [AGENTS.md](AGENTS.md) is for engineering work. The built-in [title skill](skills/reel-titles/SKILL.md) guides title wording.
+
+The current Codex runner can read the transcript and inspect selected frames, but **cannot listen to audio**. Word timing, breath detection, and take scoring are imperfect, so review the joins and uncertain wording. Silent screen recordings keep their interaction flow rather than receiving automatic speech cuts.
+
+## How the pieces connect
+
+```mermaid
+flowchart TD
+    Browser[Browser editor] <--> Server[Local Python server]
+    Server --> Media[Local media tools: preview, speech analysis, rendering]
+    Server --> Codex[Separate Codex CLI editing session]
+    Codex <--> Account[OpenAI: editorial reasoning using your ChatGPT account]
+    Codex <--> Tools[Project editing tools via MCP]
+    Tools <--> Server
+    Server <--> Storage[Private .aiedit storage]
+```
+
+- **Browser:** the video preview, timeline, captions, and review controls. Built with HTML, CSS, and JavaScript.
+- **Python server:** the local app behind the browser. FastAPI receives actions, saves projects, queues work, and reports progress.
+- **Media tools:** FFmpeg handles video/audio and rendering; whisper.cpp handles speech recognition/alignment and Silero detection. These run locally.
+- **Codex session:** the server launches `codex exec` after preparation. This is a separate editing session, not the coding chat you already have open. Its result and review notes appear in the editor.
+- **MCP adapter:** gives that session named editing tools such as reading context, inspecting a frame, fixing captions, adding a title, and placing a reference. It connects to the same revision-checked API as the browser and CLI. The app configures it automatically; there is no MCP setup step for basic editing.
+
+The runner disables shell tools and unrelated integrations. If you change the edit while AI is working, revision checks stop conflicting AI writes. Repeating an identical preparation preserves later human corrections. Failed AI work can be retried with **Retry AI editing** without repeating valid local analysis. Restarting the server interrupts active work; retry it explicitly.
+
+See the [browser workflow](docs/browser-workflow.md) for the complete execution and recovery rules.
+
+## References, sound, and app captures
+
+**B-roll** means supporting visuals shown while the main video continues: a website screenshot, an app recording, or another relevant clip. The private asset library starts empty on a fresh installation; personal media and sound effects are not bundled.
+
+- Import images, clips, and music into your own library. AI can search and inspect those assets.
+- Automatic web screenshots require an existing compatible Codex browser connection (`node_repl` in your Codex configuration). Basic editing works without it; unavailable captures become review notes. Browser recording depends on what that connection supports.
+- Automatic screenshot/B-roll pop sounds require exactly one audio asset tagged `default-reference-pop`. With the server running, import your sound with:
+
+  ```sh
+  python3 scripts/editor.py asset-import /absolute/path/pop.mp3 --tags default-reference-pop
+  ```
+
+  New reference overlays use this default unless explicitly opted out. Titles and graphics do not receive a pop. See the [asset guide](docs/minimal-workflow.md#asset-inbox-and-mood-library) for controls and API opt-out.
+- Defaults use **Geeza Pro**, a macOS font that is not redistributed here. On other systems, install a licensed font and adjust the preset font families before generating titles/captions.
+- Optional same-laptop iOS app captures need Xcode, a Simulator runtime, and a configured app target. They are a separate capture workflow; see [app capture setup](docs/minimal-workflow.md#app-references-on-this-mac). AirDrop needs Apple's command-line developer tools (`xcode-select --install`).
+
+Optional linked-media downloads use `yt-dlp` (`brew install yt-dlp`). Add media you have the right to use; source and rights metadata stay with imported assets.
+
+## Files, privacy, and output quality
+
+```text
+.aiedit/
+  models/                       Local speech models
+  library/                      Your reusable assets and sounds
+  projects/<id>/
+    source/                     Preserved original video
+    working/                    Preview, waveform, transcript, AI attempt logs
+    exports/                    Versioned MP4, SRT, and edit manifests
+    history/                    Earlier project revisions
+    project.json                Current saved edit
+```
+
+Uploads and exports stay under `.aiedit/` on your computer. Git ignores its contents except the [storage README](.aiedit/README.md) and an empty placeholder. **Back up this folder separately** to keep your projects, shared library, and editing history.
+
+Local storage does not mean fully offline AI: Codex receives editorial transcript context and selected tool observations, including inspected frames, through OpenAI's account service. The runner does not upload the whole video for cloud transcription or rendering. Optional web captures and media downloads also use the internet. There is no automatic social publishing.
+
+Exports keep earlier versions unchanged. Browser output is an exact 9:16 center crop at the source frame rate; the API/CLI also support native framing. Encoding preserves source HDR transfer and 10-bit HEVC for HDR footage; SDR uses H.264. Exports are re-encoded, not bit-for-bit copies, and HDR playback depends on the browser/display. Preview captions and audio mixing are approximate; check the encoded export before sharing.
+
+## Troubleshooting
+
+| Problem | What to check |
+| --- | --- |
+| The website will not open | Keep `./start.sh` running and use `http://127.0.0.1:8775`. Check the terminal error if startup exits. |
+| AI editing does not start | Run `codex --version` and `codex login status` in the terminal that starts the server. Sign in with ChatGPT, then click **Retry AI editing**. Account limits and internet access still apply. |
+| Codex reports an unknown option | Update the CLI using your installation method. The runner needs a recent CLI supporting `codex exec --ignore-user-config`, JSON output, and MCP configuration. |
+| Captions or transcription fail | Run `uv run python scripts/doctor.py`. Confirm FFmpeg has libass and the Whisper model is installed. |
+| Speech detection fails | Confirm `whisper-vad-speech-segments` is available from whisper.cpp and rerun `uv run python scripts/setup_vad.py` if its model is missing or damaged. |
+| References or the pop sound are missing | Import your assets, check the single `default-reference-pop` tag, and read AI review notes. Automatic web capture also needs the browser connection above. |
+| Processing was interrupted | Keep the source/project folder, restart the server, and retry the failed operation. Completed analysis can be reused; do not delete the project to retry. |
+
+Longer videos and slower hardware take longer. Cached analysis avoids repeated work; it cannot guarantee identical editing times for every video.
+
+## Terminal use and development
+
+The server must be running. The CLI uses the same API as the browser:
 
 ```sh
 python3 scripts/editor.py import /absolute/path/clip.mp4
-python3 scripts/editor.py get PROJECT_ID
-python3 scripts/editor.py prepare PROJECT_ID --language auto --max-words 3
-python3 scripts/editor.py transcribe PROJECT_ID --language auto
-python3 scripts/editor.py silence PROJECT_ID --minimum 0.12 --padding 0.025
-python3 scripts/editor.py export PROJECT_ID --plain --label "Story review"
-python3 scripts/editor.py export PROJECT_ID --label "Caption review"
-python3 scripts/editor.py history "caption placement" --reusable
+python3 scripts/editor.py prepare PROJECT_ID --language auto --max-words 3 --wait
+python3 scripts/editor.py status PROJECT_ID
+python3 scripts/editor.py retry-ai PROJECT_ID --wait
+python3 scripts/editor.py export PROJECT_ID --format vertical --label "Review" --wait
 ```
 
-Operations are asynchronous: poll `get` until the relevant `jobs` entry is `done`, and report `error` messages. Wait for one operation to finish before starting another for that project. Silence thresholds identify quiet audio, not delivery quality or false starts.
+`prepare --wait` follows local preparation and automatic AI editing. Use `retry-ai` only if that AI pass needs another attempt. The [minimal workflow guide](docs/minimal-workflow.md) covers targeted edits, assets, feedback, and capture commands. Local API documentation is at [127.0.0.1:8775/docs](http://127.0.0.1:8775/docs).
 
-For video-editing instructions, read [editor.md](editor.md). For custom decisions, fetch the latest project and save an Edit JSON file containing `base_revision`, `name`, `cuts`, `subtitles`, `subtitle_style`, `brief`, `references`, `overlays`, `punches`, `music`, and `story`:
-
-```sh
-python3 scripts/editor.py save PROJECT_ID --file /absolute/path/edit.json
-python3 scripts/editor.py review PROJECT_ID --file /absolute/path/note.json
-python3 scripts/editor.py resolve PROJECT_ID --note-id NOTE_ID --file /absolute/path/resolution.json
-```
-
-A note contains `export_file`, `time` (seconds on that export), `change`, `reason`, and `scope` (`this_edit` or `reusable`). A resolution contains `resolved_in`, the filename of a later export; `null` reopens it. An HTTP 409 requires reading and reconciling the latest project. Keep source times on cuts and captions; do not shift them by removed time yourself.
-
-## Files and privacy
-
-```text
-aiedit/             Media processing, timelines, persistence, HTTP API
-web/                Browser editor; no frontend build step
-scripts/            Agent client, doctor, model setup, generated demo
-templates/brief.md  Starting brief for a real clip
-docs/workflow.md    Editing process and tool selection
-.aiedit/            Local storage; only README and an empty placeholder are tracked
-  models/
-  library/          Private assets, mood tags, and hook performance
-  capture-settings.json  Machine-specific app capture target
-  projects/<id>/
-    source/         Preserved imported original
-    working/        Proxy, waveform, source transcript
-    references/     Space for local supporting assets
-    exports/        Immutable videos, captions, manifests
-    history/        Earlier project revisions
-    project.json    Current decisions, brief, references, reviews
-```
-
-Uploads are saved to `.aiedit/projects/<id>/source/`; edited versions are saved to that project's `exports/` folder. The [storage folder](.aiedit/README.md) appears on GitHub through its README and an empty `projects/.gitkeep` placeholder. Its actual contents stay ignored, including every project's videos, captions, transcripts, snapshots, and feedback.
-
-The top-level `footage/`, `references/`, `working/`, and `exports/` folders are optional local staging areas; only their empty placeholders are tracked. Media, transcripts, models, and review notes are never part of the code repository. Back up `.aiedit/` separately to retain projects. There are no cloud inference calls, external API keys, or automatic publishing. Remembering feedback stores local history; it does not train a model or automatically apply preferences.
-
-## Verify
+Optional environment variables: `AIEDIT_PORT`, `AIEDIT_DATA`, `AIEDIT_MODEL`, `AIEDIT_DTW_MODEL`, `AIEDIT_VAD_MODEL`, and `AIEDIT_URL` for the CLI. Defaults use port `8775` and `.aiedit/`. Model setup scripts always write into the repo's `.aiedit/models/`; with a custom data directory, set the model paths explicitly. The server always binds to `127.0.0.1`.
 
 ```sh
 uv run --group dev pytest -q
@@ -113,10 +176,6 @@ node --check web/canvas.mjs
 node --test tests/*.test.mjs
 ```
 
-Tests generate synthetic footage and exercise real FFmpeg decoding, cuts, burned captions, original preservation, range playback, revision conflicts, immutable export bundles, source transcripts, and feedback search. CI does not need personal footage, a speech-model download, an Xcode installation, or a native Simulator. Capture guard tests and mocks prove their own scope; actual native captures require the local host prerequisites.
+Node.js is needed for the JavaScript checks, not to serve the editor. Tests use generated media; CI does not need your footage or a signed-in Codex account. Native captures and AirDrop require separate checks on a configured Mac.
 
-On macOS, `uv run python scripts/create_demo.py` makes a clearly generated sample using the system voice and FFmpeg. Add `--minimal` for a vertical sample with an unfinished retry and a web-reference cue. Import the printed path to try the workflow. It is not user footage.
-
-The workflow is adapted from [George Wang's editing resource pack](https://246bfcda.ht-ml.app/). The starting editor foundation comes from this user's existing Local Cut workspace; this repository evolves it independently. See [workflow notes](docs/workflow.md) for the focused tool choices.
-
-The complete agent recipe, asset commands, production JSON, and interactive same-laptop capture protocol are in [the minimal workflow guide](docs/minimal-workflow.md).
+The workflow draws on [George Wang's editing resource pack](https://246bfcda.ht-ml.app/) and evolved from the creator's Local Cut workspace. See [workflow notes](docs/workflow.md) for tool choices.
